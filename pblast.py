@@ -101,7 +101,7 @@ class domfind:
             for key, value in domdict.items():
                 value.sort()
                 for domregion in value:
-                    outputText.append(key + '\t' + str(domregion[0]) + '\t' + str(domregion[1]) + '\t' + domregion[2] + '\n')
+                    outFile.write(key + '\t' + str(domregion[0]) + '\t' + str(domregion[1]) + '\t' + domregion[2] + '\n')
         
     def hmmercutter(args, outdir, basename):
         import os
@@ -122,21 +122,24 @@ class domfind:
             coords = []
             for entry in group:
                 line = entry.rstrip('\n').split('\t')
-                coords.append((line[1], line[2]))
+                coords.append((int(line[1]), int(line[2])))
             # Remove identical coordinates and re-sort the list
             coords = list(set(coords))
             coords.sort()
             # Join overlaps together into a single region
             overlapping = 'y'
-            while overlapping == 'y':
+            while True:
+                if len(coords) == 1 or overlapping == 'n':
+                    break
                 for y in range(len(coords)-1):
-                    if coords[y+1][0] >= coords[y][1]+1:    # This means we'll collapse domain ranges like (100-297, 298-400) into a single value
+                    if coords[y+1][0] > coords[y][1]+1 and y != len(coords)-2:     # Adding +1 to coords[y][1] means we'll collapse domain ranges like (100-297, 298-400) into a single value
                         continue
-                    else:
+                    elif coords[y+1][0] <= coords[y][1]+1:
                         highest = max(coords[y][1], coords[y+1][1])
-                        coords[y] = [coords[0], highest]
+                        coords[y] = [coords[0][0], highest]
+                        del coords[y+1]
                         break
-                    if y == len(coords)-2:
+                    else:                                                           # We need the y != check above since we need to set an exit condition when no more overlaps are present. The if/elif will always trigger depending on whether there is/is not an overlap UNLESS it's the second last entry and there is no overlap. In this case we finally reach this else clause, and we trigger an exit.
                         overlapping = 'n'
                         break
             # Retain results for subsequent cutting in a dictionary
@@ -460,6 +463,44 @@ class domfind:
             outfile.close()
 
     ### PARSE PSI-BLAST
+    def parsepblast_peaks(args, outdir, basename):
+        import os, time
+        import numpy as np
+        from Bio import SeqIO
+        from itertools import groupby
+        # Get the sequence lengths for each query
+        seqArrays = {}
+        with open(os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta'), 'r') as fileIn:
+            records = SeqIO.parse(open(fileIn, 'rU'), 'fasta')
+            for record in records:
+                seqId = record.id
+                seqLen = len(str(record.seq))
+                seqArrays[seqId] = [0]*seqLen     # This can be converted into a numpy array later
+        # Load in the PBLAST file as a groupby iterator
+        pblastname = os.path.join(os.getcwd(), outdir, basename + '_psireport.results')
+        grouper = lambda x: x.split('\t')[0]
+        with open(pblastname, 'r') as pblastfile:
+            for key, group in groupby(pblastfile, grouper):
+                group = list(group).reverse()   # This lets us parse the PBLAST results so that we can obtain the last iteration's result immediately and then skip redundant hits
+                alreadyHit = []
+                for entry in group:
+                    if entry == '\n' or entry == 'Search has CONVERGED!\n':
+                        continue
+                    # Obtain data from this blast hit
+                    line = entry.split('\t')
+                    qname = line[0]
+                    hname = line[1]
+                    if qname == hname or hname in alreadyHit:    # i.e., skip self-hits, and skip redundant hits
+                        continue
+                    alreadyHit.append(hname)
+                    start = int(line[6])
+                    end = int(line[7])
+                    # Update the numpy array-like list
+                    for i in range(start-1, end):
+                        seqArrays[key][i] += 1
+                # Convert to an array
+                array = np.array(seqArrays[key])
+            
     def parsepblast_doms(args, outdir, basename):
         import os, time
         from Bio import SeqIO
