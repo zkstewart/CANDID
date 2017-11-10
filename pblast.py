@@ -464,28 +464,35 @@ class domfind:
 
     ### PARSE PSI-BLAST
     def parsepblast_peaks(args, outdir, basename):
-        import os, time
+        import os, time, math
         import numpy as np
         from Bio import SeqIO
         from itertools import groupby
+        from .peakdetect import peakdetect
+        # Prep for later output generation
+        infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
+        #records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+        outname = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
         # Get the sequence lengths for each query
         seqArrays = {}
-        with open(os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta'), 'r') as fileIn:
-            records = SeqIO.parse(open(fileIn, 'rU'), 'fasta')
-            for record in records:
-                seqId = record.id
-                seqLen = len(str(record.seq))
-                seqArrays[seqId] = [0]*seqLen     # This can be converted into a numpy array later
+        fileIn = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
+        records = SeqIO.parse(open(fileIn, 'rU'), 'fasta')
+        for record in records:
+            seqId = record.id
+            seqLen = len(str(record.seq))
+            seqArrays[seqId] = [0]*seqLen     # This can be converted into a numpy array later
         # Load in the PBLAST file as a groupby iterator
         pblastname = os.path.join(os.getcwd(), outdir, basename + '_psireport.results')
         grouper = lambda x: x.split('\t')[0]
-        with open(pblastname, 'r') as pblastfile:
+        domDict = {}    # This will hold ranges of potential domains associated with sequence IDs as key
+        with open(pblastname, 'r') as pblastfile, open(outname, 'w') as fileOut:
             for key, group in groupby(pblastfile, grouper):
-                group = list(group).reverse()   # This lets us parse the PBLAST results so that we can obtain the last iteration's result immediately and then skip redundant hits
+                if key == '\n' or key == 'Search has CONVERGED!\n':
+                    continue
+                group = list(group)
+                group.reverse()   # This lets us parse the PBLAST results so that we can obtain the last iteration's result immediately and then skip redundant hits
                 alreadyHit = []
                 for entry in group:
-                    if entry == '\n' or entry == 'Search has CONVERGED!\n':
-                        continue
                     # Obtain data from this blast hit
                     line = entry.split('\t')
                     qname = line[0]
@@ -498,10 +505,151 @@ class domfind:
                     # Update the numpy array-like list
                     for i in range(start-1, end):
                         seqArrays[key][i] += 1
+                # Check if we got any hits
+                if sum(seqArrays[key]) == 0:            # This means we only had self-hits
+                    continue
+                elif len(set(seqArrays[key])) == 1:     # This means we only had completely overlapping hits against this sequence
+                    continue
                 # Convert to an array
                 array = np.array(seqArrays[key])
+                # Find peak indices
+                maxindices, minindices = peakdetect.peakdet(array,0.5)
+                # Get plateau regions
+                plateaus = []
+                values = []
+                for maximum in maxindices:
+                    index = maximum[0]
+                    value = maximum[1]
+                    # Look forward      [the peakdetect.peakdet values are always at the start of the plateau, so we don't need to look back, we just need to look forward to find where the plateau ends]
+                    for i in range(index, len(array)):
+                        if array[i] == value:
+                            continue
+                        else:
+                            plat = [index,i-1]     # This is 0-indexed, and we -1 since we want the previous i value
+                            break
+                    plateaus.append(plat)
+                    values.append(value)
+                if len(plateaus) == 1:              ### ADD EXTENSION: MAKE PLATEAU EXTENSION A FUNCTION ###
+                    domDict[key] = plateaus
+                    continue
+                # Chain plateaus together
+                arbitrary1 = 0.50   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
+                arbitrary2 = 0.75   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
+                for i in range(len(plateaus)-1):        # S=start,E=end,L=length
+                    depressS = plateaus[i][1] + 1
+                    depressE = plateaus[i+1][0] -1          # +1/-1 to start/end respectively  since the plateau ranges are the actual regions of overlap, i.e., 1->3 means 1, 2, and 3. Thus, 4 is the first character that does not overlap.
+                    depressL = depressE - depressS + 1      # +1 here to get the proper length of the gap region (i.e., a gap of 1 amino acid might look like 3->3, 3-3 = 0, so we need to +1
+                    depressR = array[depressS:depressE + 1]
+                    if depressL <= args['cleanAA']:
+                        # Use arbitrary value 1 to determine if chaining is correct
+                        maxVal = max([values[i], values[i+1]])  # We determine chaining based on the highest coverage plateau for a few reasons. Most importantly, the higher coverage plateau is most likely to be a real domain, so we should prioritise it and make sure it doesn't join to lower coverage regions unless they meet our arbitrary chaining limits
+                        cutoff = math.ceil(maxVal * arbitrary1) # We round up to handle low numbers properly. For example, 2*0.5=1.0. We don't need to round this, and 1.0 is good here if depressL<= cleanAA. However, 2*0.75=1.5. Rounding down would be 1, but this would mean we chain probably separate domains together incorrectly. Thus, by rounding up, we are more strict.
+                        belowCutoff = np.where(depressR < cutoff)
+                        if len(belowCutoff[0]) > 0:
+                            continue                            # We don't chain these two plateaus together if we have any positions with less coverage than our cutoff/have regions with no coverage
+                        else:
+                            plateaus[i] = [plateaus[i][0], plateaus[i+1][1]]
+                            plateaus[i+1] = [plateaus[i][0], plateaus[i+1][1]]
+                            values[i] = maxVal
+                            values[i+1] = maxVal                # We want to prevent extending a plateau significantly beyond where it should like what could happen if we don't update the value here
+                    else:
+                        # Use arbitrary value 2 to determine if chaining is correct [we treat gaps longer than the expected minimum domain length more strictly]
+                        maxVal = max([values[i], values[i+1]])  # We determine chaining based on the highest coverage plateau for a few reasons. Most importantly, the higher coverage plateau is most likely to be a real domain, so we should prioritise it and make sure it doesn't join to lower coverage regions unless they meet our arbitrary chaining limits
+                        cutoff = math.ceil(maxVal * arbitrary2)
+                        belowCutoff = np.where(depressR < cutoff)
+                        if len(belowCutoff[0]) > 0:
+                            continue                            # We don't chain these two plateaus together if we have any positions with less coverage than our cutoff
+                        else:
+                            plateaus[i] = [plateaus[i][0], plateaus[i+1][1]]
+                            plateaus[i+1] = [plateaus[i][0], plateaus[i+1][1]]
+                            values[i] = maxVal
+                            values[i+1] = maxVal
+                # Clean up the plateaus
+                while True:
+                    if len(plateaus) == 1:  # Exit condition if we reduced the number of plateaus to 1, thus meaning there cannot be overlaps
+                        break
+                    overlap = 'n'
+                    for y in range(len(plateaus)-1):
+                        if plateaus[y+1][0] > plateaus[y][1]:
+                            continue
+                        else:
+                            plateaus[y] = [plateaus[y][0], plateaus[y+1][1]]
+                            del plateaus[y+1]
+                            del values[y+1]
+                            overlap = 'y'
+                            break
+                    if overlap == 'n':      # Exit condition if we make it through the 'for y' loop without encountering any overlaps
+                        break
+                # Extend plateaus following slightly modified chaining rules
+                ## We can handle plateau extension without causing incorrect overlap by checking for the first of two occurrences. 1: we find a point where the length cutoff becomes enforced, or 2: the coverage starts to increase again, which means we're heading towards another peak (which wasn't collapsed into this plateau).
+                for i in range(len(plateaus)):
+                    cutoff1 = math.ceil(values[i] * arbitrary1)
+                    cutoff2 = math.ceil(values[i] * arbitrary2)
+                    # Look back
+                    ongoingCount = 0            # This measures how long our extension is so we can apply the two arbitrary values when appropriate
+                    prevCov = array[plateaus[i][0]]
+                    newStart = plateaus[i][0]
+                    for x in range(plateaus[i][0]-1, -1, -1):
+                        ongoingCount += 1
+                        indexCov = array[x]
+                        # Increasing check
+                        if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
+                            break
+                        # Low coverage check
+                        elif ongoingCount <= args['cleanAA']:
+                            if indexCov >= cutoff1:
+                                newStart = x
+                                continue
+                            else:
+                                break
+                        else:
+                            if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
+                                newStart = x
+                                continue
+                            else:
+                                break
+                    plateaus[i][0] = newStart
+                    # Look forward
+                    ongoingCount = 0
+                    prevCov = array[plateaus[i][1]]
+                    newEnd = plateaus[i][1]
+                    for x in range(plateaus[i][1]+1, len(array)):
+                        ongoingCount += 1
+                        indexCov = array[x]
+                        # Increasing check
+                        if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
+                            break
+                        # Low coverage check
+                        elif ongoingCount <= args['cleanAA']:
+                            if indexCov >= cutoff1:
+                                newEnd = x
+                                continue
+                            else:
+                                break
+                        else:
+                            if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
+                                newEnd = x
+                                continue
+                            else:
+                                break
+                    plateaus[i][1] = newEnd
+
+                # Add results to our domDict for later output generation
+                domDict[key] = plateaus
+
+            # Format output fasta file
+            records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+            for record in records:
+                seqid = record.id
+                if seqid in domDict:
+                    seq = str(record.seq)
+                    ranges = domDict[seqid]
+                    for i in range(len(ranges)):
+                        tmpDomain = seq[ranges[i][0]:ranges[i][1]+1]
+                        fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]+1) + '-' + str(ranges[i][1]+1) + '\n' + tmpDomain + '\n')
             
     def parsepblast_doms(args, outdir, basename):
+        ### TO-DO: PARSE PBLAST FILE BEFORE PLATEAU ALGORITHM TO INCORPORATE QUERY AND HIT RESULTS ###
         import os, time
         from Bio import SeqIO
         from itertools import groupby
