@@ -3,7 +3,7 @@
 # Import external packages
 import argparse, os, time, platform
 # Import classes from included script folder
-from domfind import domfind, domclust, benchparse
+from domfind import domfind, domclust, benchparse, peakdetect
 
 #### USER INPUT SECTION
 usage = """Usage: <fasta file> <output directory> <threads> [-options]
@@ -22,8 +22,7 @@ directory as this script file) for the results of previous runs. These files wil
 used by default and will result in skipping previously completed sections of this program.
 ----
 Finally, this script requires CD-HIT, BLAST+, signalP, seg, COILS, HMMER3, as well as Python 3.x
-and Python 2.7 to be installed. The directories of these programs can be specified in this script,
-otherwise if these are previously in your PATH then specification of directories can be skipped.
+and Python 2.7 to be installed. The directories of these programs must be specified in this script.
 Additionally, the Pfam database file must also be downloaded. Make sure to specify the actual file
 location, not just the directory where this file is located.
 ----
@@ -105,7 +104,7 @@ p.add_argument("-cleanAA", dest="cleanAA", type = int, default = 30,
                   help="This command is not intended to be changed; experienced users may wish to change this, however.")
 p.add_argument("-cooccur", dest="cooccur", type = float, default = 0.75,
                   help="This command is not intended to be changed; experienced users may wish to change this, however.")
-p.add_argument("-benchmark", dest="benchmark", choices = ['y', 'n'],
+p.add_argument("-benchmark", dest="benchmark", choices = ['y', 'n', 'Y', 'N'], default = 'n',
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED.")
 p.add_argument("-rejects", dest="rejects", type = str,
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED.")
@@ -294,7 +293,8 @@ if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_psirep
 
 ### PARSE PSI-BLAST
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclustered_domains.fasta')):
-        domfind.parsepblast_doms(args, outputDir, fasta_base)    
+        #domfind.parsepblast_doms(args, outputDir, fasta_base)
+        domfind.parsepblast_peaks(args, outputDir, fasta_base)
 
 #### DOMAIN CLUSTERING
 prev_doms = []
