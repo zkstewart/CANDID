@@ -45,6 +45,8 @@ p.add_argument("-cdhitdir", dest="cdhitdir", type = str,
                   help="Specify the directory where CD-HIT executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-hmmer3dir", dest="hmmer3dir", type = str,
                   help="Specify the directory where HMMER3 executables are located. If this is already in your PATH, you can leave this blank.")
+p.add_argument("-mmseqs2dir", dest="mmseqs2dir", type = str,
+                  help="Specify the directory where the MMseqs2 executable is located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-signalpdir", dest="signalpdir", type = str,
                   help="Specify the directory where signalp executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-segdir", dest="segdir", type = str,
@@ -80,30 +82,32 @@ p.add_argument("-hmmeval", dest="hmmeval", type = float,
                   help="Specify the e-value cut-off to enforce for removing known domains from sequences.")
 p.add_argument("-hmmevalnov",dest="hmmevalnov", type = float,
                   help="Specify the e-value cut-off to enforce for clustering novel domains from sequences. This should be equal to or stricter than that enforced for removing known domains.")
+p.add_argument("-skip",dest="skip", type = str, choices = ['cath', 'superfamily', 'both', 'noskip'],
+                  help="Optional ability to ignore domain predictions from CATH and/or SUPERFAMILY databases if they are present in your HMM database.")
 # Opts 5: BLAST parameters
-p.add_argument("-parse", dest="parse", choices = ["y", "n"],
-                  help="If making a blast database, specify whether the parse_seqids argument should be passed to makeblastdb")
+#p.add_argument("-parse", dest="parse", choices = ['y', 'n', 'Y', 'N'],
+#                  help="If making a blast database, specify whether the parse_seqids argument should be passed to makeblastdb")
 p.add_argument("-psieval", dest="psieval", type = float,
                   help="This command is equivalent to the -evalue option that will be provided to PSI-BLAST.")
 # Opts 6: Alignment free algorithms
-p.add_argument("-alf", dest="alf", type = str, choices = ['bray-curtis', 'google', 'canberra', 'ncd'],
-                  help="Specify the alignment-free algorithm to employ. Recommended to use google.")
-p.add_argument("-reduce", dest="reduce", choices = ['n', '11', '15'],
-                  help="If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark).")
+p.add_argument("-alf", dest="alf", type = str, choices = ['braycurtis', 'google', 'canberra'],
+                  help="Specify the alignment-free algorithm to employ. Recommended to use braycurtis.")
+p.add_argument("-reduce", dest="reduce", choices = ['n', 'N', '11', '15'],
+                  help="If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n').")
 # Opts 7: HDBSCAN algorithm parameters
 p.add_argument("-minsize", dest="minsize", type = int,
-                  help="Dictates the minimum cluster size argument provided to HDBSCAN. Higher numbers will result in identification of domains that occur more frequently in your data.")
+                  help="Dictates the minimum cluster size argument provided to HDBSCAN. Higher numbers will result in identification of domains that occur more frequently in your data. Recommended to use 3 (at least).")
 p.add_argument("-minsample", dest="minsample", type = int,
-                  help="Dictates the minimum sample size argument provided to HDBSCAN. Higher numbers will increase the strictness with which HDBSCAN clusters sequences, typically resulting in less sensitivity but higher specificity.")
+                  help="Dictates the minimum sample size argument provided to HDBSCAN. Higher numbers will increase the strictness with which HDBSCAN clusters sequences, typically resulting in less sensitivity but higher specificity. Recommended to use 2.")
 p.add_argument("-leaf", dest="leaf", type = str, choices = ['y', 'n', 'Y', 'N'],
                   help="Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. Should result in a higher number of smaller-sized groups being identified. Not using leaf ('n') is recommended.")
 p.add_argument("-singleclust", dest="singleclust", type = str, choices = ['y', 'n', 'Y', 'N'],
                   help="Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. By default HDBSCAN recommends that you do not allow this ('n'). If you believe there may be a single novel domain in your data, you can set this to 'y'.")
 # Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
 p.add_argument("-cleanAA", dest="cleanAA", type = int, default = 30,
-                  help="This command is not intended to be changed; experienced users may wish to change this, however.")
-p.add_argument("-cooccur", dest="cooccur", type = float, default = 0.75,
-                  help="This command is not intended to be changed; experienced users may wish to change this, however.")
+                  help="This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length of a true domain. This value is not intended to be changed; experienced users may wish to do so, however.")
+#p.add_argument("-cooccur", dest="cooccur", type = float, default = 0.75,
+#                  help="This command is not intended to be changed; experienced users may wish to change this, however.")      ## This value is part of the 'parse_joiner' function. Currently it is not being used; future updates may support a co-occurrence identifier to find potentially incorrectly separated domains (realistically, this would probably be a separate program...)
 p.add_argument("-benchmark", dest="benchmark", choices = ['y', 'n', 'Y', 'N'], default = 'n',
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED.")
 p.add_argument("-rejects", dest="rejects", type = str,
@@ -157,7 +161,7 @@ if close == 'y':
         quit()
 ## Possible new checks
 
-# Create or update the text file of parameters if necessary
+# Create or update the text file of parameters if necessary [TO-DO: FIX ISSUES WITH INTEGRATING TEXT-FILE PARAMETERS AND CMD-LINE PARAMETERS]
 if not os.path.isfile(param_name) or changes == 'y':
         param_text = []
         for key, value in args.items():
@@ -168,11 +172,15 @@ if not os.path.isfile(param_name) or changes == 'y':
 
 # Check if the necessary programs are installed and can be reached
 ## BLAST
-if not os.path.isfile(os.path.join(args['blastdir'], 'makeblastdb')) and not os.path.isfile(os.path.join(args['blastdir'], 'makeblastdb.exe')):
-        print('I cannot find "makeblastdb" at the location provided (' + args['blastdir'] + ')')
-        quit()
-if not os.path.isfile(os.path.join(args['blastdir'], 'psiblast')) and not os.path.isfile(os.path.join(args['blastdir'], 'psiblast.exe')):
-        print('I cannot find "psiblast" at the location provided (' + args['blastdir'] + ')')
+#if not os.path.isfile(os.path.join(args['blastdir'], 'makeblastdb')) and not os.path.isfile(os.path.join(args['blastdir'], 'makeblastdb.exe')):
+#        print('I cannot find "makeblastdb" at the location provided (' + args['blastdir'] + ')')
+#        quit()
+#if not os.path.isfile(os.path.join(args['blastdir'], 'psiblast')) and not os.path.isfile(os.path.join(args['blastdir'], 'psiblast.exe')):
+#        print('I cannot find "psiblast" at the location provided (' + args['blastdir'] + ')')
+#        quit()
+## MMSEQS2
+if not os.path.isfile(os.path.join(args['mmseqs2dir'], 'mmseqs')) and not os.path.isfile(os.path.join(args['mmseqs2dir'], 'mmseqs.exe')):
+        print('I cannot find "mmseqs" at the location provided (' + args['mmseqs2dir'] + ')')
         quit()
 ## CD-HIT
 if not os.path.isfile(os.path.join(args['cdhitdir'], 'cd-hit')) and not os.path.isfile(os.path.join(args['cdhitdir'], 'cd-hit.exe')):
@@ -277,31 +285,46 @@ if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_clean.
 
 ### MAKE BLAST DB
 # Check if all blast db component files exist
-dbname_files = []
-for suffix in ['.phr', '.pin', '.pog', '.psd', '.psi', '.psq']:
-        dbname_files.append(fasta_base + '_blastdb' + suffix)
-dbname_files = set(dbname_files)
-dir_files = set(os.listdir(os.path.join(os.getcwd(), outputDir)))
-existing_files = dbname_files.intersection(dir_files)
+#dbname_files = []
+#for suffix in ['.phr', '.pin', '.pog', '.psd', '.psi', '.psq']:
+#        dbname_files.append(fasta_base + '_blastdb' + suffix)
+#dbname_files = set(dbname_files)
+#dir_files = set(os.listdir(os.path.join(os.getcwd(), outputDir)))
+#existing_files = dbname_files.intersection(dir_files)
         
-if not len(existing_files) == 6:
-        domfind.makeblastdb(args, outputDir, fasta_base)
+#if not len(existing_files) == 6:
+#        domfind.makeblastdb(args, outputDir, fasta_base)
 
-### RUN PSI-BLAST
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_psireport.results')):
-        domfind.runpblast(args, outputDir, fasta_base)     
+### MAKE MMSEQS2 DB
+if not os.path.isdir(os.path.join(os.getcwd(), outputDir, 'mms2tmp')):
+        os.mkdir(os.path.join(os.getcwd(), outputDir, 'mms2tmp'))
+if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2DB')) and not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2DB.index')):
+        domfind.makemms2db(args, outputDir, fasta_base)  
 
-### PARSE PSI-BLAST
+### RUN MMSEQS2
+if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2SEARCH.m8')):
+        domfind.runmms2(args, outputDir, fasta_base)     
+print('Done?')
+quit()
+### PARSE MMSEQS2
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclustered_domains.fasta')):
         #domfind.parsepblast_doms(args, outputDir, fasta_base)
         domfind.parsepblast_peaks(args, outputDir, fasta_base)
+
+### RUN PSI-BLAST
+#if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_psireport.results')):
+#        domfind.runpblast(args, outputDir, fasta_base)     
+
+### PARSE PSI-BLAST
+#if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclustered_domains.fasta')):
+#        #domfind.parsepblast_doms(args, outputDir, fasta_base)
+#        domfind.parsepblast_peaks(args, outputDir, fasta_base)
 
 #### DOMAIN CLUSTERING
 prev_doms = []
 rejects_list = []
 current_doms = ''
 iterate = 'y'
-iterate2 = 'y'
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_clustered_domains.fasta')):
         while iterate == 'y':
                 alf_matrix1, alf_matrix2, idlist = domclust.alfree_matrix(args, outputDir, fasta_base + '_unclustered_domains.fasta')
@@ -316,33 +339,8 @@ if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_cluste
                 domfind.hmmerparse(args, os.path.join(outputDir, 'tmp_alignments'), 'tmp')
                 iterate = domclust.clust_update(args, outputDir, fasta_base, group_dict, rejects_list)
                 firstloop = 'n'
-        # Perform a final, stricter domain clustering
-        #while iterate2 == 'y':
-        #        alf_matrix, idlist = domclust.alfree_matrix(args, outputDir, fasta_base + '_unclustered_domains.fasta')
-        #        group_dict, rejects_list = domclust.cluster_hdb(alf_matrix, idlist, 2, 1, rejects_list)
-        #        if len(group_dict) == 0:
-        #                print('No potential novel domains were found. Program end.')
-        #                print(rejects_list)
-        #                quit()
-        #        print(rejects_list)
-        #        domclust.mafft_align(args, outputDir, fasta_base, group_dict)
-        #        domclust.cluster_hmms(args, outputDir, fasta_base)
-        #        domclust.hmmer3_doms(args, outputDir, fasta_base)
-        #        iterate2 = domclust.parse_joiner(args, outputDir, fasta_base, group_dict)
-        # Perform a final domain clustering to render our .hmm files
-        print('FINAL CLUSTER')
-        alf_matrix, alf_matrix2, idlist = domclust.alfree_matrix(args, outputDir, fasta_base + '_unclustered_domains.fasta')
-        group_dict, rejects_list = domclust.cluster_hdb(args, alf_matrix, alf_matrix2, idlist, rejects_list)
-        if len(group_dict) == 0:
-                print('No potential novel domains were found. Program end.')
-                #print(rejects_list)
-                quit()
-        #print(rejects_list)
-        domclust.mafft_align(args, outputDir, fasta_base, group_dict)
-        domclust.cluster_hmms(args, outputDir, fasta_base)
-        domclust.hmmer3_doms(args, outputDir, fasta_base)
-        domfind.hmmerparse(args, os.path.join(outputDir, 'tmp_alignments'), 'tmp')
-        ### CREATE _CLUSTERED_DOMAINS OUTPUT
+        ### TO-DO: Format the output nicely ###
+        print('Program finished successfully!')
 ### ITERATIVE HMM BUILDING
 
 print(time.ctime())
