@@ -86,6 +86,25 @@ class domfind:
                     did = sl[3]
                 else:
                     did = os.path.basename(sl[3])           # Some of the databases will have the full path to the domain ID, so we want to get rid of those. We handle cath especially since cath's domain IDs don't exhibit this behaviour but do incorporate a '/' in their ID
+                # Optional skipping of CATH/SUPERFAMILY databases
+                if args['skip'] != 'noskip':
+                    if args['skip'] == 'cath' and sl[3].startswith('cath'):
+                        continue
+                    elif args['skip'] == 'superfamily':
+                        try:
+                            int(did)        # SUPERFAMILY is the only database that has purely integer domain IDs
+                            continue
+                        except ValueError:
+                            doNothing = ''
+                    elif args['skip'] == 'both':
+                        if sl[3].startswith('cath'):
+                            continue
+                        try:
+                            int(did)
+                            continue
+                        except ValueError:
+                            doNothing = ''
+                # End of optional skipping
                 dstart = int(sl[17])
                 dend = int(sl[18])
                 # Add into domain dictionary    # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
@@ -385,7 +404,71 @@ class domfind:
             output.write('\n'.join(outputText))
             output.close()
             print('Final save made after ' + str(ongoingCount) + ' sequences cleaned...')
-    
+
+    ######## FUNCTIONS RELATING TO MMseqs2
+    def makemms2db(args, outdir, basename):
+        import os, subprocess, platform
+        # Format command
+        fasta = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
+        db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
+        tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
+        if platform.system() == 'Windows':
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' createdb "' + fasta + '" "' + db + '"'
+        else:
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' createdb "' + fasta + '" "' + db + '"'
+        print('Making MMseqs2 db...')
+        run_makedb = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+        makedbout, makedberr = run_makedb.communicate()
+        if makedberr.decode("utf-8") != '':
+            raise Exception('Make MMseqs2 db error text below\n' + makedberr.decode("utf-8"))
+        # Run further indexing
+        if platform.system() == 'Windows':
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' createindex "' + db + '" "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
+        else:
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' createindex "' + db + '" "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
+        print('Indexing MMseqs2 db...')
+        run_index = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+        indexout, indexerr = run_index.communicate()
+        if indexerr.decode("utf-8") != '':
+            raise Exception('Indexing MMseqs2 db error text below\n' + indexerr.decode("utf-8"))
+
+    def runmms2(args, outdir, basename):
+        import os, subprocess, platform
+        # Format command
+        if platform.system() == 'Windows':
+            db = os.path.join(outdir, basename + '_mmseqs2DB')      # MMS2 behaves a bit weirdly with Cygwin at this step. In order to get it to work, we need to use . to represent the cwd.
+            tmpdir = os.path.join(outdir, 'mms2tmp')
+            outprefix = os.path.join(outdir, basename + '_mmseqs2SEARCH')
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' search .\\' + db + ' .\\' + db + ' .\\' + outprefix + ' .\\' + tmpdir + ' --threads ' + str(args['threads']) + ' --num-iterations 4 -s 6'
+            print(cmd)
+        else:
+            #fasta = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
+            db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
+            tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' search "' + db + '" "' + db + '" "' + outprefix + '" "' + tmpdir + '" --threads ' + str(args['threads']) + ' --num-iterations 4 -s 6'
+        print('Running MMseqs2 profile iteration...')
+        run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+        mms2out, mms2err = run_mms2.communicate()
+        if mms2err.decode("utf-8") != '':
+            raise Exception('MMseqs2 profile iteration error text below\n' + mms2err.decode("utf-8"))
+        # Create tab-delim BLAST-like output
+        if platform.system() == 'Windows':
+            querydb = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
+            searchdb = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2SEARCH')
+            tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
+            #cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' convertalis ".\\' + db + '" ".\\' + db + '" ".\\' + outprefix + '.m8" ".\\' + tmpdir + '" --threads ' + str(args['threads'])
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' convertalis "' + querydb + '" "' + querydb + '" "' + searchdb + '" "' + searchdb + '.m8" "' + tmpdir + '" --threads ' + str(args['threads'])
+        else:
+            fasta = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
+            db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
+            tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
+            cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' convertalis "' + querydb + '" "' + querydb + '" "' + searchdb + '" "' + searchdb + '.m8" "' + tmpdir + '" --threads ' + str(args['threads'])
+        print('Generating MMseqs2 tabular output...')
+        run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+        mms2out, mms2err = run_mms2.communicate()
+        if mms2err.decode("utf-8") != '':
+            raise Exception('MMseqs2 tabular output generation error text below\n' + mms2err.decode("utf-8"))
+        
     ######## FUNCTIONS RELATING TO PSI-BLAST
     ### MAKE BLAST DB
     def makeblastdb(args, outdir, basename):
@@ -464,11 +547,67 @@ class domfind:
 
     ### PARSE PSI-BLAST
     def parsepblast_peaks(args, outdir, basename):
+        ### TO-DO: PARSE PBLAST FILE BEFORE PLATEAU ALGORITHM TO INCORPORATE QUERY AND HIT RESULTS ###
         import os, time, math
         import numpy as np
         from Bio import SeqIO
         from itertools import groupby
         from .peakdetect import peakdetect
+        def plateau_extens(args, plateaus, values, arbitrary1, arbitrary2):
+            ## We can handle plateau extension without causing incorrect overlap by checking for the first of two occurrences. 1: we find a point where the length cutoff becomes enforced, or 2: the coverage starts to increase again, which means we're heading towards another peak (which wasn't collapsed into this plateau).
+            for i in range(len(plateaus)):
+                cutoff1 = math.ceil(values[i] * arbitrary1)
+                cutoff2 = math.ceil(values[i] * arbitrary2)
+                # Look back
+                ongoingCount = 0            # This measures how long our extension is so we can apply the two arbitrary values when appropriate
+                prevCov = array[plateaus[i][0]]
+                newStart = plateaus[i][0]
+                for x in range(plateaus[i][0]-1, -1, -1):
+                    ongoingCount += 1
+                    indexCov = array[x]
+                    # Increasing check
+                    if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
+                        break
+                    # Low coverage check
+                    elif ongoingCount <= args['cleanAA']:
+                        if indexCov >= cutoff1:
+                            newStart = x
+                            continue
+                        else:
+                            break
+                    else:
+                        if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
+                            newStart = x
+                            continue
+                        else:
+                            break
+                plateaus[i][0] = newStart
+                # Look forward
+                ongoingCount = 0
+                prevCov = array[plateaus[i][1]]
+                newEnd = plateaus[i][1]
+                for x in range(plateaus[i][1]+1, len(array)):
+                    ongoingCount += 1
+                    indexCov = array[x]
+                    # Increasing check
+                    if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
+                        break
+                    # Low coverage check
+                    elif ongoingCount <= args['cleanAA']:
+                        if indexCov >= cutoff1:
+                            newEnd = x
+                            continue
+                        else:
+                            break
+                    else:
+                        if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
+                            newEnd = x
+                            continue
+                        else:
+                            break
+                plateaus[i][1] = newEnd
+            return plateaus
+                    
         # Prep for later output generation
         infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
         #records = SeqIO.parse(open(infile, 'rU'), 'fasta')
@@ -486,6 +625,7 @@ class domfind:
         grouper = lambda x: x.split('\t')[0]
         domDict = {}    # This will hold ranges of potential domains associated with sequence IDs as key
         with open(pblastname, 'r') as pblastfile, open(outname, 'w') as fileOut:
+            # Parse pblast file to pull out coverage per position arrays
             for key, group in groupby(pblastfile, grouper):
                 if key == '\n' or key == 'Search has CONVERGED!\n':
                     continue
@@ -500,11 +640,17 @@ class domfind:
                     if qname == hname or hname in alreadyHit:    # i.e., skip self-hits, and skip redundant hits
                         continue
                     alreadyHit.append(hname)
-                    start = int(line[6])
-                    end = int(line[7])
+                    qstart = int(line[6])
+                    hstart = int(line[8])
+                    qend = int(line[7])
+                    hend = int(line[9])
                     # Update the numpy array-like list
-                    for i in range(start-1, end):
-                        seqArrays[key][i] += 1
+                    for i in range(qstart-1, qend):
+                        seqArrays[qname][i] += 1
+                    for i in range(hstart-1, hend):
+                        seqArrays[hname][i] += 1
+            # Handle plateaus
+            for key in seqArrays.keys():
                 # Check if we got any hits
                 if sum(seqArrays[key]) == 0:            # This means we only had self-hits
                     continue
@@ -517,6 +663,8 @@ class domfind:
                 # Get plateau regions
                 plateaus = []
                 values = []
+                arbitrary1 = 0.50   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
+                arbitrary2 = 0.75   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
                 for maximum in maxindices:
                     index = maximum[0]
                     value = maximum[1]
@@ -530,11 +678,10 @@ class domfind:
                     plateaus.append(plat)
                     values.append(value)
                 if len(plateaus) == 1:              ### ADD EXTENSION: MAKE PLATEAU EXTENSION A FUNCTION ###
+                    plateaus = plateau_extens(args, plateaus, values, arbitrary1, arbitrary2)
                     domDict[key] = plateaus
                     continue
                 # Chain plateaus together
-                arbitrary1 = 0.50   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
-                arbitrary2 = 0.75   # ADD THESE AS ARGUMENTS IF ACCEPTED INTO FINAL SCRIPT VERSION
                 for i in range(len(plateaus)-1):        # S=start,E=end,L=length
                     depressS = plateaus[i][1] + 1
                     depressE = plateaus[i+1][0] -1          # +1/-1 to start/end respectively  since the plateau ranges are the actual regions of overlap, i.e., 1->3 means 1, 2, and 3. Thus, 4 is the first character that does not overlap.
@@ -581,59 +728,7 @@ class domfind:
                     if overlap == 'n':      # Exit condition if we make it through the 'for y' loop without encountering any overlaps
                         break
                 # Extend plateaus following slightly modified chaining rules
-                ## We can handle plateau extension without causing incorrect overlap by checking for the first of two occurrences. 1: we find a point where the length cutoff becomes enforced, or 2: the coverage starts to increase again, which means we're heading towards another peak (which wasn't collapsed into this plateau).
-                for i in range(len(plateaus)):
-                    cutoff1 = math.ceil(values[i] * arbitrary1)
-                    cutoff2 = math.ceil(values[i] * arbitrary2)
-                    # Look back
-                    ongoingCount = 0            # This measures how long our extension is so we can apply the two arbitrary values when appropriate
-                    prevCov = array[plateaus[i][0]]
-                    newStart = plateaus[i][0]
-                    for x in range(plateaus[i][0]-1, -1, -1):
-                        ongoingCount += 1
-                        indexCov = array[x]
-                        # Increasing check
-                        if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
-                            break
-                        # Low coverage check
-                        elif ongoingCount <= args['cleanAA']:
-                            if indexCov >= cutoff1:
-                                newStart = x
-                                continue
-                            else:
-                                break
-                        else:
-                            if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
-                                newStart = x
-                                continue
-                            else:
-                                break
-                    plateaus[i][0] = newStart
-                    # Look forward
-                    ongoingCount = 0
-                    prevCov = array[plateaus[i][1]]
-                    newEnd = plateaus[i][1]
-                    for x in range(plateaus[i][1]+1, len(array)):
-                        ongoingCount += 1
-                        indexCov = array[x]
-                        # Increasing check
-                        if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
-                            break
-                        # Low coverage check
-                        elif ongoingCount <= args['cleanAA']:
-                            if indexCov >= cutoff1:
-                                newEnd = x
-                                continue
-                            else:
-                                break
-                        else:
-                            if indexCov >= cutoff2:     # We start getting more strict now that we're beyond our expected domain region length
-                                newEnd = x
-                                continue
-                            else:
-                                break
-                    plateaus[i][1] = newEnd
-
+                plateaus = plateau_extens(args, plateaus, values, arbitrary1, arbitrary2)
                 # Add results to our domDict for later output generation
                 domDict[key] = plateaus
 
@@ -649,7 +744,6 @@ class domfind:
                         fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]+1) + '-' + str(ranges[i][1]+1) + '\n' + tmpDomain + '\n')
             
     def parsepblast_doms(args, outdir, basename):
-        ### TO-DO: PARSE PBLAST FILE BEFORE PLATEAU ALGORITHM TO INCORPORATE QUERY AND HIT RESULTS ###
         import os, time
         from Bio import SeqIO
         from itertools import groupby
