@@ -40,6 +40,7 @@ class hmm_dl:
             f.write(b''.join(data_blocks))
             f.close()
             u.close()
+            print('')
         except:
             var = traceback.format_exc()
             print("Unexpected error:")
@@ -102,7 +103,7 @@ class hmm_dl:
         import os, tarfile, gzip
         print('Extracting ' + filename + '...')
         # Get file details
-        file = os.path.join(args.outdir, filename)
+        file = filename
         extract_dir = os.path.join(args.outdir, extractdir)
         # Jump into output directory
         if file.endswith(".tar.gz"):
@@ -118,12 +119,9 @@ class hmm_dl:
             tar.extractall(extract_dir)
             tar.close()
         elif file.endswith(".gz"):
-            tar = gzip.open(file, "rb")
-            outfile = open(os.path.join(extract_dir, filename[0:-3]), 'wb')
-            for line in tar:
-                outfile.write(line)
-            tar.close()
-            outfile.close()
+            with gzip.open(file, "rb") as tar, open(os.path.join(extract_dir, filename[0:-3]), 'wb') as outfile:
+                for line in tar:
+                    outfile.write(line)
         else:
             print('I don\'t recognise the file format for ' + filename)
             print('This script assume it is compressed with .tar, .tar.gz, or .tar.bz2 extension')
@@ -148,7 +146,7 @@ class hmm_dl:
                 hmmout, hmmerr = run_hmmbuild.communicate()
                 # Error handler (inside loop)
                 if hmmerr.decode("utf-8") != '':
-                    raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -hmmer3dir argument if this directory is not in your PATH')
+                    raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -hmmer3dir argument if this directory is not in your PATH. The program crashed when processing file ' + file_prefix)
                 
         # Continue defining the thread function-using function
         import os, threading
@@ -167,7 +165,7 @@ class hmm_dl:
         # Begin the loop
         for i in range(threads):
             start = chunk_size * i
-            if i+1 != int(args['threads']):
+            if i+1 != threads:
                 end = chunk_size * (i+1)
             else:
                 end = dirsize
@@ -181,6 +179,22 @@ class hmm_dl:
             process_thread.join()
         print('Individual HMM building completed')
 
+    def filenum_check(args):
+        import os
+        # Get the directory of the cdd extraction & count how many files are present
+        extract_dir = os.path.join(args.outdir, 'cdd_extraction')
+        extracted_msas = os.listdir(extract_dir)
+        extr_count = len(extracted_msas)
+        # Get the directory of the cdd individual models & count how many files are present
+        ind_hmm_dir = os.path.join(args.outdir, 'cdd_individual_models')
+        hmms = os.listdir(ind_hmm_dir)
+        hmm_count = len(hmms)
+        # Return error message if the two values do not correspond
+        if extr_count != hmm_count:
+            return 'Error'
+        else:
+            return 'Success'
+        
     def concat_hmms(args):
         import os
         print('Concatenating individual HMMs into a single .hmm...')
