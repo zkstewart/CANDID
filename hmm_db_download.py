@@ -1,7 +1,9 @@
 # Import external packages
-import argparse, os
+import argparse, os, shutil
 # Import classes from included script folder
 from domfind import hmm_dl
+
+cdd_prefixes = ('cd', 'COG', 'KOG', 'LOAD', 'MTH', 'pfam', 'PHA', 'PRK', 'PTZ', 'sd', 'smart', 'TIGR', 'PLN', 'CHL')    # We use this so we can tell if the user has been using the output directories for anything other than the program. It won't be entirely foolproof, but it should prevent anything major.
 
 #### USER INPUT SECTION
 usage = """Usage: <output directory> <molecule type> [-options]
@@ -14,7 +16,7 @@ or to add your own .hmm models to the cdd_individual_models directory to add the
 
 # Required
 p = argparse.ArgumentParser(description=usage)
-p.add_argument("outdir", type = str, help="Specify the name of the directory to download and process the CDD into a .hmm readable by HMMER3")
+p.add_argument("outdir", type = str, help="Specify the name of the directory to download and process the CDD into a .hmm readable by HMMER3. This directory MUST be dedicated solely to this program; if this program encounters an error, certain directories and their contents will be removed.")
 # Optional cmds
 p.add_argument("-hmmer3dir", "--hmmer3dir", dest="hmmer3dir", type = str, default = '',
                   help="Specify the directory where HMMER3 executables are located. If this is already in your PATH, you can leave this blank.")
@@ -44,20 +46,33 @@ if not os.path.isdir(args.outdir):
 #### CORE PROCESSES
 
 ### CHECK IF RUNNING THIS IS NECESSARY
-#if os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
-#        print('The CDD.hmm file is already present in this directory. Specify a new output directory, or delete this file if it is outdated.')
-#        quit()
+if os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
+        print('The CDD.hmm file is already present in this directory. Specify a new output directory, or delete this file if it is outdated.')
+        quit()
 
 ### DOWNLOAD CDD
 # Download
-#if not os.path.isfile(os.path.join(args.outdir, cdd_filename)):
-#        hmm_dl.fasta_dl(args, filename)
+if not os.path.isfile(os.path.join(args.outdir, cdd_filename)):
+        hmm_dl.fasta_dl(args, cdd_filename)
 
 # Untar
 if not os.path.isdir(os.path.join(args.outdir, 'cdd_extraction')):
         os.mkdir(os.path.join(args.outdir, 'cdd_extraction'))
-        hmm_dl.untar(args, cdd_filename, 'cdd_extraction')
-
+        try:
+                hmm_dl.untar(args, os.path.join(args.outdir, cdd_filename), 'cdd_extraction')
+        except Exception, e:
+                #shutil.rmtree(os.path.join(args.outdir, 'cdd_extraction'))      # This could be dangerous if this directory were being used for something other than this program...
+                print('Untarring file ' + os.path.join(args.outdir, cdd_filename) + ' failed. Check the error log below')
+                print(str(e))
+                # Delete the temporary file(s) intelligently
+                tmpdir_contents = os.listdir(os.path.join(args.outdir, 'cdd_extraction'))
+                safe = 'y'
+                for file in tmpdir_contents:
+                        if not file.startswith(cdd_prefixes) and not file.endswith('.FASTA'):
+                                print('I think I can detect files in the ' + os.path.join(args.outdir, 'cdd_extraction') + ' directory that should not exist (i.e., ' + file + ')')
+                                print('
+                        if file != os.path.join(args.outdir, cdd_filename)
+                
 if args.superfamily != 'n' and not os.path.isdir(os.path.join(args.outdir, 'superfamily_extraction')):
         os.mkdir(os.path.join(args.outdir, 'superfamily_extraction'))
         hmm_dl.untar(args, args.superfamily, 'superfamily_extraction')
@@ -71,14 +86,23 @@ if args.cath != 'n' and not os.path.isdir(os.path.join(args.outdir, 'cath_extrac
 if not os.path.isdir(os.path.join(args.outdir, 'cdd_individual_models')):
         os.mkdir(os.path.join(args.outdir, 'cdd_individual_models'))
 
-if not os.path.isdir(os.path.join(args.outdir, 'cdd_db')):
-        hmm_dl.hmmbuild(args, cdd_filename)
+#if not os.path.isdir(os.path.join(args.outdir, 'cdd_db')):
+#        hmm_dl.hmmbuild(args, cdd_filename)
+hmm_dl.hmmbuild(args, cdd_filename)     # We can afford to spend a bit of time validating that the files are not 0kb (which is all we do if this step has been previously completed)
+
+# Check that all HMMs are present
+buildresult = hmm_dl.filenum_check(args)
+if buildresult == 'Error':
+        print('Not all MSAs present in the ' + os.path.join(args.outdir, 'cdd_extraction') + ' directory appear to have built HMMs successfully. Recommend that you re-run the program to fix this and identify the problem file(s).')
+        quit()
+else:
+        print('Validated that HMM building appears to have worked.')
 
 # Concatenate individual CDD HMMs
 #if not os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
 if not os.path.isdir(os.path.join(args.outdir, 'cdd_db')):
         os.mkdir(os.path.join(args.outdir, 'cdd_db'))
-        hmm_dl.concat_hmms(args, cdd_filename)
+        hmm_dl.concat_hmms(args)
 
 # Concatenate any additional databases specified (SUPERFAMILY, CATH) into the .hmm file (oh boy is this going to be large!)
 # Convert SUPERFAMILY to 3.1
