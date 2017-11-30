@@ -68,10 +68,10 @@ if not os.path.isdir(os.path.join(args.outdir, 'cdd_extraction')):
                 tmpdir_contents = os.listdir(os.path.join(args.outdir, 'cdd_extraction'))
                 safe = 'y'
                 for file in tmpdir_contents:
-                        if not file.startswith(cdd_prefixes) and not file.endswith('.FASTA'):
+                        if not file.startswith(cdd_prefixes) and not file.lower().endswith('.fasta'):
                                 print('I think I can detect files in the ' + os.path.join(args.outdir, 'cdd_extraction') + ' directory that should not exist (i.e., ' + file + ')')
-                                print('
-                        if file != os.path.join(args.outdir, cdd_filename)
+                                print('Are you using this directory for anything other than this script? Move this file and any similar ones out of it to resume the program.')
+                                quit()
                 
 if args.superfamily != 'n' and not os.path.isdir(os.path.join(args.outdir, 'superfamily_extraction')):
         os.mkdir(os.path.join(args.outdir, 'superfamily_extraction'))
