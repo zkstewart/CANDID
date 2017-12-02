@@ -31,7 +31,6 @@ class domclust:
                     else:
                         newseq += letter
                 seq_list[i] = newseq
-            print(newseq)
         ### TEST
         # Compute distance matrix of choice
         if args['alf'] == 'google':
@@ -69,6 +68,23 @@ class domclust:
             counts = word_vector.Counts(length_list, p)
             dist = word_distance.Distance(counts, 'braycurtis')
             matrix1 = distmatrix.create(id_list, dist)
+        ### TESTING ###
+        #import numpy as np
+        #matrix2 = np.array(matrix2)
+        #np.set_printoptions(threshold=np.inf)
+        #matrix2.tofile('dataset.csv', sep=',', format="%s")
+        #text = pyperclip.paste()
+        #table = text.split(']\r\n [ ')
+        #for i in range(len(table)):
+        #    table[i] = table[i].replace('[', '')
+        #    table[i] = table[i].replace(']', '')
+        #for line in table:
+        #    sl = line.split()
+        #    out.append('\t'.join(sl))
+        #pyperclip.copy('\r\n'.join(out))
+        #print(id_list)
+        #quit()
+        ### TESTING ###
         # Return value
         return matrix1, matrix2, id_list
 
@@ -102,16 +118,16 @@ class domclust:
                 rejects_list.append(idlist[i])
         #### TESTING ####
         # Look through the results of the matrix1 (or word_size == 1) for any groups not found for word_size == 2
-        if args['leaf'] == 'y':
+        if args['leaf'] == 'y' and args['singleclust'] == 'y':
+            clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)
+        elif args['leaf'] == 'y' and args['singleclust'] == 'n':
             clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
+        elif args['leaf'] == 'n' and args['singleclust'] == 'y':
+            clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)   
         else:
             clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
         clusterer.fit(matrix1.data)
         new_groups = clusterer.labels_
-        # Relabel group
-        #for x in range(len(new_groups)):
-        #    if new_groups[x] != -1:
-        #        new_groups[x] = new_groups[x] + len(group_dict)
         # Format new group into a dictionary
         new_dict = {}
         for i in range(len(idlist)):
@@ -184,8 +200,13 @@ class domclust:
         # Clean out the temporary alignment file directory
         align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
         if os.path.isdir(align_out_dir):
-            shutil.rmtree(align_out_dir, ignore_errors=False, onerror=None)
-            os.mkdir(align_out_dir)
+            for file in os.listdir(align_out_dir):
+                file_path = os.path.join(align_out_dir, file)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    print(e)
         else:
             os.mkdir(align_out_dir)
         # Set up threading requirements
@@ -258,20 +279,18 @@ class domclust:
         print('Updating clusters...')
         # Read in hmmer output file
         align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
-        hmmer_results = os.path.join(align_out_dir, 'tmp_hmmer.results')
+        hmmer_results = os.path.join(align_out_dir, 'tmp_hmmerParsed.results')
         hmmer_file = open(hmmer_results, 'r')
         # Parse contents and compare against current domain groups
         #hmm_reg = re.compile(r'Domain_(\d{0,10})_align')
         ongoingCount = 0
         iterate = 'n'
         for line in hmmer_file:
-            if line.startswith('#') or line == '' or line == '\n': continue
+            if line == '\n':
+                continue
             split_line = line.split()
             seqid = split_line[0]
-            seqrange = set(range(int(split_line[17])-1, int(split_line[18])))
-            evalue = float(split_line[12])
-            if evalue > float(args['hmmevalnov']):
-                continue
+            seqrange = set(range(int(split_line[1])-1, int(split_line[2])))
             # Check if this is already part of a group
             overlap = 'n'
             seqnum = 1      # Every time we find another domain region with this same seqid, we add +1 here so we can properly label it if we add it into our unclusted_domains.fasta file
@@ -326,6 +345,362 @@ class domclust:
             # Add the new sequence into the group_dict for any further loops
             ongoingCount += 1
             group_dict['irrelevant_' + str(ongoingCount)] = [newseqname[1:]]
+
+        # Let user know if this script is going to go through another iterative round
+        if iterate == 'n':
+            print('No more domain regions were identified with iterative HMMER searching.')
+        else:
+            print('New potential domain region(s) were identified with iterative HMMER searching...')
+        return iterate
+
+    def hmmer_grow(args, outdir, basename, group_dict, rejects_list):
+        import os, re
+        from Bio import SeqIO
+        # Define functions
+        def seqgrab(args, outdir, basename, seqid, start, stop):
+            # Pull out the protein region
+            infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
+            records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+            for record in records:
+                if record.id == seqid:
+                    aaseq = str(record.seq)
+                    break
+            aaseq = aaseq[int(start)-1:int(stop)]       # -1 to start to make this 0-indexed
+            return aaseq
+        def seqnamer(args, outdir, basename, seqid, start, stop):
+            # Figure out which domain number this region should be
+            infile = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
+            records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+            seqnum = 0
+            for record in records:
+                baseid = '_'.join(record.id.split('_')[0:-1])
+                if baseid == seqid:
+                    seqnum += 1
+            # Add to fasta
+            newseqname = '>' + seqid + '_Domain_' + str(seqnum) + '_' + start + '-' + stop
+            return newseqname
+        
+        # Let user know if this script is going to go through another iterative round
+        print('Checking HMMER results for changes...')
+        # Read in hmmer output file
+        align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
+        hmmer_results = os.path.join(align_out_dir, 'tmp_hmmerParsed.results')
+        hmmer_file = open(hmmer_results, 'r')
+        # Parse hmmer file contents to create dictionary structures
+        pidDict = {}
+        domDict = {}
+        with open(hmmer_results, 'r') as fileIn:
+            for line in fileIn:
+                if line == '' or line == '\n':
+                    continue        # Skip blank lines, shouldn't exist, but can't hurt
+                # Parse line
+                sl = line.rstrip('\n').rstrip('\r').split()
+                pid = sl[0]
+                dstart = sl[1]
+                dend = sl[2]
+                did = sl[3]
+                # Add into protein ID dictionary
+                if pid not in domDict:
+                    domDict[pid] = [[pid, dstart, dend, did]]
+                else:
+                    domDict[pid].append([pid, dstart, dend, did])
+        # Build list of clustered sequences
+        clusts_list = [j for i in list(group_dict.values()) for j in i]
+        #rejects_list is already in the right format to work with#
+        # Parse the unclustered domains fasta file
+        infile = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
+        unclustDoms = list(SeqIO.parse(open(infile, 'rU'), 'fasta'))
+        newDoms = []        # These will be added to the fasta file when we generate it at the end of the hmmer_grow function
+        # Loop through the hmmer file and find its best match in the unclustered sequences file and make modifications indicated by hmmer
+        with open(hmmer_results, 'r') as fileIn:        # Looping through the HMMER file line-by-line is good since we already have a dictionary structure if we want to look at other regions for the particular sequence ID on this line
+            for line in fileIn:
+                if line == '' or line == '\n':
+                    continue        # Skip blank lines, shouldn't exist, but can't hurt
+                # Parse line
+                sl = line.rstrip('\n').rstrip('\r').split()
+                pid = sl[0]
+                dstart = sl[1]
+                dend = sl[2]
+                did = sl[3]
+                hmmerrange = set(range(int(dstart), int(dend)+1))   # +1 to stop positions to keep everything 1-indexed
+                # Find best match in the fasta file
+                best = [0,0,0,0]
+                secondBest = [0,0,0,0]
+                positionsOverlapped = set()
+                for x in range(len(unclustDoms)):
+                    # Get sequence details
+                    seqid_components = unclustDoms[x].id.split('_')
+                    seqid = '_'.join(seqid_components[0:-3])
+                    if seqid == pid:
+                        start, stop = seqid_components[-1].split('-')
+                        seqrange = set(range(int(start), int(stop)+1))
+                        hmmerOvlAmount = 1 - (len(hmmerrange-seqrange) / len(hmmerrange))           # 1-(calc) means we're getting the amount of the HMMER hit that is overlapped (i.e., 1-[[100-40]/100] == 0.6, which means that 60% of it is overlapped)
+                        seqOvlAmount = 1 - (len(seqrange-hmmerrange) / len(seqrange))               # Unsure if this is necessary yet
+                        positionsOverlapped = positionsOverlapped.union(hmmerrange & seqrange)
+                        #if hmmerOvlAmount > best[2] or seqOvlAmount > best[3]:
+                        if hmmerOvlAmount > best[2]:
+                            secondBest = best
+                            best = [unclustDoms[x].id, hmmerrange, hmmerOvlAmount, seqOvlAmount]
+                # Figure out if this hmmer region is novel
+                if best[2] == 0:                                                                            # i.e., this sequence region does not overlap anything in the unclustered domains fasta
+                    # Add unadulterated into the newDoms list for latter appending to fasta file
+                    newseqname = seqnamer(args, outdir, basename, pid, dstart, dend)
+                    newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                    newDoms.append([newseqname, newseq])
+                    print('Added novel domain to file (' + newseqname + ')')
+                elif best[2] <= 0.1 and best[3] <= 0.1:                                                     # i.e., this sequence only has slight overlap with other sequences
+                    # Trim the mostly novel sequence and add into the newDoms list for latter appending to fasta file
+                    newrange = hmmerrange-positionsOverlapped
+                    newstart = str(min(newrange))
+                    newend = str(max(newrange))
+                    newseqname = seqnamer(args, outdir, basename, pid, newstart, newend)
+                    newseq = seqgrab(args, outdir, basename, pid, newstart, newend)
+                    print('Added trimmed novel domain to file (' + newseqname + ')')
+                # Figure out if this hmmer region has already been noted
+                elif (best[2] >= 0.9 or best[3] >= 0.9) and (secondBest[2] < 0.5 or secondBest[3] < 0.5):   # i.e., this sequence region matches well and does not have any ambiguity w/r/t the second best hit
+                    ## Check to see if domain region should be modified based upon whether there's a marked difference between the two sequences & on whether it was clustered or not
+                    # First, assess sequences that weren't clustered and blindly accept hmmer's advice
+                    if best[0] in rejects_list:
+                        print('Good match to rejected HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                        newseqname = seqnamer(args, outdir, basename, pid, dstart, dend)
+                        newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                        for x in range(len(unclustDoms)):
+                            if unclustDoms[x].id == best[0]:
+                                unclustDoms[x].id = newseqname
+                                unclustDoms[x].seq = newseq
+                    # Secondly, if this sequence was not rejected, see if we should modify the sequence based on hmmer advice (?)
+                    elif best[0] in clusts_list:
+                        # Currently, we do nothing
+                        print('Good match to clustered HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                    else:
+                        ## Debug ##
+                        print('Unplanned for scenario: not in clusts list or rejects list?')
+                        print(best[0])
+                        print(pid)
+                        print(clusts_list)
+                        print(rejects_list)
+                        quit()
+                # Handle divergent sequences if there are no good secondBest sequences
+                elif (best[2] >= 0.5 or best[3] >= 0.5) and secondBest[2] == 0.0:                           # i.e., the hmmer region differs a fair bit to the original sequence, but there's no other possibility so we can be sure that it is this sequence.
+                    ## THIS IS BAD ##
+                    # For divergent sequences, we assume that the region that the hmmer model fits is better than the current sequence regardless of whether it clustered successfully or not
+                    print('Divergent match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                    newseqname = seqnamer(args, outdir, basename, pid, dstart, dend)
+                    newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                    for x in range(len(unclustDoms)):
+                        if unclustDoms[x].id == best[0]:
+                            unclustDoms[x].id = newseqname
+                            unclustDoms[x].seq = newseq
+                # Handle more ambiguous situations
+                elif (best[2] >= 0.5 or best[3] >= 0.5) and secondBest[2] < 0.2:                            # i.e., this sequence region mostly matches, but has some ambiguity
+                    print('Ambiguous situation has arisen. Investigate.')
+                    print(best)
+                    print(secondBest)
+                    print(positionsOverlapped)
+                    quit()
+                # Ignore anything that overlaps in scenario 0.5 > best[2] > 0.1 or (best[2] >=0.9 and secondBest[2] >= 0.5) since these are likely to be repeat models overlapping parts of the repeat
+                else:
+                    print('Ignoring highly ambiguous overlap: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                    #print(best)
+                    #print(secondBest)
+
+    def old_hmmer_grow(args, outdir, basename, group_dict, rejects_list):
+        import os, re
+        from Bio import SeqIO
+        # Let user know if this script is going to go through another iterative round
+        print('Updating clusters...')
+        # Read in hmmer output file
+        align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
+        hmmer_results = os.path.join(align_out_dir, 'tmp_hmmerParsed.results')
+        hmmer_file = open(hmmer_results, 'r')
+        # Parse contents to create dictionary structures
+        pidDict = {}
+        domDict = {}
+        with open(hmmer_results, 'r') as fileIn:
+            for line in fileIn:
+                if line == '' or line == '\n':
+                    continue        # Skip blank lines, shouldn't exist, but can't hurt
+                # Parse line
+                sl = line.rstrip('\n').rstrip('\r').split()
+                pid = sl[0]
+                dstart = sl[1]
+                dend = sl[2]
+                did = sl[3]
+                # Add into protein ID dictionary
+                if pid not in domDict:
+                    domDict[pid] = [[pid, dstart, dend, did]]
+                else:
+                    domDict[pid].append([pid, dstart, dend, did])
+                # Add into domain dictionary
+                #if did not in domDict:
+                #    domDict[did] = [[pid, dstart, dend, did]]
+                #else:
+                #    domDict[did].append([pid, dstart, dend, did])
+        # Parse the rejects_list to create a dictionary structure
+        rejDict = {}
+        for reject in rejects_list:
+            rejsplit = reject.split('_')
+            rejid = '_'.join(rejsplit[0:-3])
+            rejstart, rejend = rejsplit[-1].split('-')
+            if rejid not in rejDict:
+                rejDict[rejid] = [[rejid, rejstart, rejend]]
+            else:
+                rejDict[rejid].append([rejid, rejstart, rejend])
+        ## GROUP_DICT INTERATIONS ##
+        # Compare domtblout file against current domain groups
+        ongoingCount = 0
+        iterate = 'n'
+        for protid, line in domDict.items():
+            for l in line:
+                seqid = l[0]
+                seqrange = set(range(int(l[1])-1, int(l[2])))
+                seqmodel = l[3]
+                seqmodelNum = l[3].split('_')[1]
+                # Check if this is already part of a group
+                overlap = 'n'
+                trimAccept = 'n'
+                seqnum = 1      # Every time we find another domain region with this same seqid, we add +1 here so we can properly label it if we add it into our unclusted_domains.fasta file
+                for key, value in group_dict.items():
+                    if overlap == 'y' or trimAccept == 'y':         # This provides two exit conditions. Overlap means we'll exit both this loop and not go into rejects_list checking, trimAccept means we found a sequence region that wasn't clustered - now we just need to check it against the rejects list to see if its new or not.
+                        break
+                    for val in value:
+                        val_split = val.split('_')
+                        valid = '_'.join(val_split[0:-3])           # We split off the range value here (e.g. 1-72) and just get the sequence ID
+                        if valid != seqid:
+                            continue
+                        seqnum += 1
+                        # Check for overlap [if we get here, then the seqid is in another group]
+                        estSeqHits = domDict[seqid]
+                        estRanges = []
+                        estModels = []
+                        for hit in estSeqHits:
+                            hitRange = set(range(int(hit[1])-1, int(hit[2])))
+                            estRanges.append(hitRange)
+                            estModels.append(hit[3])
+                        #totalOvl = 0
+                        overlappedModels = []
+                        positionsOverlapped = set()
+                        for i in range(len(estRanges)):
+                            ovlAmount = 1 - (len(seqrange-estRanges[i]) / len(seqrange))        # 1-(calc) means we're getting the amount of sequence that is not overlapped (i.e., [100-40]/100 == 0.6, which means that 60% of it is not overlapped)
+                            if ovlAmount > 0.0:
+                                #totalOvl += ovlAmount
+                                overlappedModels.append(estModels[i])
+                                positionsOverlapped = positionsOverlapped.union(seqrange & estRanges[i])
+                        overlappedModels = list(set(overlappedModels))
+                        totalOvl = 1 - (len(seqrange-positionsOverlapped) / len(seqrange))
+                        if totalOvl == 1.0:               # i.e., if it completely overlaps, then we know that this domain region is already covered by a model.
+                            print('complete overlap')
+                            overlap = 'y'
+                            continue
+                        # Handle different levels of overlap
+                        elif 1.0 > totalOvl >= 0.6:                                    # i.e., if more than 60% of the model overlaps with other models in this sequence, we'll notify the user as to this significant overlap and ignore the sequence
+                            # Do not keep the sequence and alert the user to this significant overlap
+                            overlap = 'y'
+                            print('mostly overlaps')
+                            quit()
+                            for model in overlappedModels:
+                                if model != seqmodel:
+                                    print('A region for ' + seqmodel + ' was found which overlapped ' + model + ' significantly. This sequence was not accepted, but you need to check these two domains to see if they should join.')
+                            break
+                        elif 0.6 > totalOvl > 0.0:                                                           # i.e., if less than 40% of the model overlaps with other models in this sequence, we'll allow it (with trimming) but raise a note of which domain models it overlapped
+                            # Trim the sequence
+                            print(seqid)
+                            print(totalOvl)
+                            print(overlappedModels)
+                            print(positionsOverlapped)
+                            print(seqrange)
+                            seqrange = seqrange-positionsOverlapped
+                            print(seqrange)
+                            print('----')
+                            print(l)
+                            l[1] = str(min(seqrange))
+                            l[2] = str(max(seqrange))
+                            print(l)
+                            # Notify user if it overlapped a non-same domain model
+                            for model in overlappedModels:
+                                if model != seqmodel:
+                                    print('Found a new region for ' + seqmodel + ' but it overlapped ' + model + '. I\'ve trimmed the new region, but you should check these two domains to see if they should join.')
+                            trimAccept = 'y'
+                            break
+                            quit()
+                        else:
+                            # Good hit!
+                            print('Found a new region for ' + seqmodel + ' and it didn\'t overlap anything previously clustered!')
+                            trimAccept = 'y'
+                            break
+                if overlap == 'y':
+                    continue
+                ## REJECTS_LIST INTERACTIONS ##
+                # Check if this region hasn't previously been recognised and rejected [if we get here, then the sequence does not significantly overlap any sequences that are currently clustered]
+                overlap = 'n'
+                trimAccept = 'n'
+                print(rejDict)
+                for key, value in rejDict.items():
+                    if overlap == 'y' or trimAccept == 'y':         # This provides two exit conditions. Overlap means we'll exit both this loop and not go into rejects_list checking, trimAccept means we found a sequence region that wasn't clustered - now we just need to check it against the rejects list to see if its new or not.
+                        break
+                    for val in value:
+                        if val[0] != seqid:
+                            continue
+                        print('ayyyyy')
+                        quit()
+                        seqnum += 1
+                        # Check for overlap [if we get here, then the seqid is in another group]
+                        estSeqHits = domDict[seqid]
+                        estRanges = []
+                        estModels = []
+                        for hit in estSeqHits:
+                            hitRange = set(range(int(hit[1])-1, int(hit[2])))
+                            estRanges.append(hitRange)
+                            estModels.append(hit[3])
+                        #totalOvl = 0
+                        overlappedModels = []
+                        positionsOverlapped = set()
+                        for i in range(len(estRanges)):
+                            ovlAmount = 1 - (len(seqrange-estRanges[i]) / len(seqrange))        # 1-(calc) means we're getting the amount of sequence that is not overlapped (i.e., [100-40]/100 == 0.6, which means that 60% of it is not overlapped)
+                            if ovlAmount > 0.0:
+                                #totalOvl += ovlAmount
+                                overlappedModels.append(estModels[i])
+                                positionsOverlapped = positionsOverlapped.union(seqrange & estRanges[i])
+                        overlappedModels = list(set(overlappedModels))
+                        totalOvl = 1 - (len(seqrange-positionsOverlapped) / len(seqrange))
+
+
+
+                    
+                    rejectrange = reject_split[-1].split('-')               # If we get here, this sequence has previously been recognised and rejected - we just need to see if it is the same range
+                    rejectrange = set(range(int(rejectrange[0])-1, int(rejectrange[1])))
+                    if len(seqrange-rejectrange) / len(seqrange) < 0.9:     # i.e., if more than 10% of seqrange (new sequence) overlaps valrange (established sequence), we modify the established sequence to better fit the HMM. Note that this may 'shrink' a domain shorter than the MMseqs2 output suggested, and as such this program is not necessarily capable of finding the exact borders of domains. A helper program will be made to assist in manually curating these domain models.
+                        # If it overlaps, check to see if it's part of the same cluster
+                        lineModel = l[3].split('_')[1]
+                        if lineModel == str(key):
+                            print('Ok')
+                            quit()
+                        overlap = 'y'
+                        break
+                #if overlap == 'y':
+                #    continue
+                # Pull out the protein region [if we get here, this sequence 1: does not significantly overlap any sequences that are currently clustered, and 2: does not significantly overlap any sequences previously found but not clustered in the previous iteration
+                infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
+                records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+                for record in records:
+                    if record.id == seqid:
+                        aaseq = str(record.seq)
+                        break
+                aaseq = aaseq[int(l[1])-1:int(l[2])]
+                print(seqid)
+                print(aaseq)
+                quit()
+                #if not len(aaseq) >= args['cleanAA']:                      ### Consider removing: I am not using cleanAA anymore for enforcing minimum domain sizes, the pairwise alignment & clustering can handle this
+                #    continue
+                # Add any sequence that gets this deep in our loop into our unclustered domains group for a further iteration
+                iterate = 'y'
+                newseqname = '>' + seqid + '_Domain_' + str(seqnum) + '_' + l[1] + '-' + l[2]
+                outfile = open(os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta'), 'a')
+                outfile.write(newseqname + '\n' + aaseq + '\n')     # The unclustered_domains.fasta should always end on a newline, so we don't need to preface our addition with '\n'
+                outfile.close()
+                # Add the new sequence into the group_dict for any further loops
+                #ongoingCount += 1
+                #group_dict['irrelevant_' + str(ongoingCount)] = [newseqname[1:]]
 
         # Let user know if this script is going to go through another iterative round
         if iterate == 'n':
