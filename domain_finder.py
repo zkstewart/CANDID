@@ -100,7 +100,10 @@ p.add_argument("-leaf", dest="leaf", type = str, choices = ['y', 'n', 'Y', 'N'],
                   help="Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. Should result in a higher number of smaller-sized groups being identified. Not using leaf ('n') is recommended.")
 p.add_argument("-singleclust", dest="singleclust", type = str, choices = ['y', 'n', 'Y', 'N'],
                   help="Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. By default HDBSCAN recommends that you do not allow this ('n'). If you believe there may be a single novel domain in your data, you can set this to 'y'.")
-# Opts 7: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
+# Opts 7: Iteration control
+p.add_argument("-numiters", dest="numiters", type = int,
+                  help="Optionally specify an upper limit on the amount of times this program will iterate through HMMER domain discovery. Recommended value depends on size of dataset. Specifying numiters == 10 means this program will end after 10 iterations OR when no new regions are found, whichever comes first. Numiters == 0 means the program will stop iterating only when no new domains are found.")
+# Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
 p.add_argument("-cleanAA", dest="cleanAA", type = int, default = 30,
                   help="This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length of a true domain. This value is not intended to be changed; experienced users may wish to do so, however.")
 #p.add_argument("-cooccur", dest="cooccur", type = float, default = 0.75,
@@ -292,27 +295,30 @@ if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclus
         domfind.parsemms2_peaks(args, outputDir, fasta_base)
 
 #### DOMAIN CLUSTERING
-prev_doms = []
 rejects_list = []
 current_doms = ''
-iterate = 'y'
+iterate = 0
+loopCount = 0                                                   # Loop count functions provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_clustered_domains.fasta')):
-        while iterate == 'y':
+        while iterate < 2 or loopCount <= args['numiters']:             # This loop works by feeding iterate 0 into the hmmer_grow function. If no new region is found, iterate becomes 1. This is then fed back into hmmer_grow, and if there is still no new regions found, iterate becomes 2 and the while loop ends. We do this because, even if no new region is found when iterate == 0, changes to domain regions according to HMMER results still occur, and this may influence the clustering of the next round which may subsequently result in new regions being discovered.
                 alf_matrix1, alf_matrix2, idlist = domclust.alfree_matrix(args, outputDir, fasta_base + '_unclustered_domains.fasta')
                 group_dict, rejects_list = domclust.cluster_hdb(args, alf_matrix1, alf_matrix2, idlist, rejects_list)
-                #if len(group_dict) == 0:
-                #        print('No potential novel domains were found. Program end.')
-                #        #print(rejects_list)
-                #        quit()
-                #domclust.mafft_align(args, outputDir, fasta_base, group_dict)
-                #domclust.cluster_hmms(args, outputDir, fasta_base)
-                #domclust.hmmer3_doms(args, outputDir, fasta_base)
-                #domfind.hmmerparse(args, args['hmmevalnov'], os.path.join(outputDir, 'tmp_alignments'), 'tmp')
-                iterate = domclust.hmmer_grow(args, outputDir, fasta_base, group_dict, rejects_list)
-        ### TO-DO: Format the output nicely ###
-        print('Program finished successfully!')
-### ITERATIVE HMM BUILDING
-
+                if len(group_dict) == 0:
+                        print('No potential novel domains were found. Program end.')
+                        quit()
+                domclust.mafft_align(args, outputDir, fasta_base, group_dict)
+                domclust.cluster_hmms(args, outputDir, fasta_base)
+                domclust.hmmer3_doms(args, outputDir, fasta_base)
+                domfind.hmmerparse(args, args['hmmevalnov'], os.path.join(outputDir, 'tmp_alignments'), 'tmp')
+                domclust.parse_domtblout(os.path.join(outputDir, 'tmp_alignments', 'tmp_hmmer.results'), args['hmmevalnov'], os.path.join(outputDir, 'tmp_alignments', 'tmp_hmmerParsed.results'))
+                iterate = domclust.hmmer_grow(args, outputDir, fasta_base, group_dict, rejects_list, iterate)
+                if args['numiters'] != 0:       # This prevents the numiters exit condition from activating
+                        loopCount += 1
+        # Provide informative loop exit text
+        if loopCount > args['numiters']:
+                print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
+        else:
+                print('Program finished successfully after no new domain regions were able to be found.')
 print(time.ctime())
 ### 
 
