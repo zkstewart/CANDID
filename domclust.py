@@ -104,7 +104,8 @@ class domclust:
             clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)   
         else:
             clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
-        clusterer.fit(matrix2.data)     # We look at matrix2 (or word_size == 2) first since it should, theoretically, find more 'similar' groups better than a word_size of 1
+        #clusterer.fit(matrix2.data)     # We look at matrix2 (or word_size == 2) first since it should, theoretically, find more 'similar' groups better than a word_size of 1
+        clusterer.fit(matrix1.data) ## TESTING WORD SIZE 1 FIRST
         # Pull out domain groups
         clust_groups = clusterer.labels_
         # Sort groups
@@ -126,7 +127,7 @@ class domclust:
             clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)   
         else:
             clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
-        clusterer.fit(matrix1.data)
+        clusterer.fit(matrix2.data)     ## TESTING WORD SIZE 2 SECOND
         new_groups = clusterer.labels_
         # Format new group into a dictionary
         new_dict = {}
@@ -261,13 +262,13 @@ class domclust:
         if hmmerr.decode("utf-8") != '':
             raise Exception('hmmpress error text below' + str(hmmerr.decode("utf-8")))
 
-    def hmmer3_doms(args, outdir, basename):
+    def hmmer3_doms(args, outdir, basename, suffix):
         import os, subprocess
         # Run HMMER3
         print('Running hmmsearch to grow domain clusters...')
         align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
         outhmm_name = os.path.join(align_out_dir, 'dom_models.hmm')
-        cmd = os.path.join(args['hmmer3dir'], 'hmmsearch') + ' --cpu ' + str(args['threads']) + ' -E ' + str(args['hmmevalnov']) + ' --domtblout ' + os.path.join(align_out_dir, 'tmp_hmmer.results') + ' "' + os.path.join(align_out_dir, outhmm_name) + '" "' + os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta') + '"'
+        cmd = os.path.join(args['hmmer3dir'], 'hmmsearch') + ' --cpu ' + str(args['threads']) + ' -E ' + str(args['hmmevalnov']) + ' --domtblout ' + os.path.join(align_out_dir, 'tmp_hmmer.results') + ' "' + os.path.join(align_out_dir, outhmm_name) + '" "' + os.path.join(os.getcwd(), outdir, basename + suffix) + '"'    # Testing with clean file rather than cd-hit file to prevent converging on known domains
         run_hmmer3 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
         hmmout, hmmerr = run_hmmer3.communicate()
         if hmmerr.decode("utf-8") != '':
@@ -563,14 +564,16 @@ class domclust:
         # Define functions
         def seqgrab(args, outdir, basename, seqid, start, stop):
             # Pull out the protein region
-            infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
+            infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')   # We grab the hits from the cdhit.fasta file because the clean.fasta file might have a small stretch of low complexity region inside the sequence region that HMMER is hitting against
             records = SeqIO.parse(open(infile, 'rU'), 'fasta')
             for record in records:
                 if record.id == seqid:
                     aaseq = str(record.seq)
+                    aarecord = record
                     break
             aaseq = aaseq[int(start)-1:int(stop)]       # -1 to start to make this 0-indexed
-            return aaseq
+            aarecord.seq = aaseq
+            return aaseq, aarecord
         def seqnamer(args, outdir, basename, seqid, start, stop):
             # Figure out which domain number this region should be
             infile = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
@@ -579,17 +582,19 @@ class domclust:
             for record in records:
                 baseid = '_'.join(record.id.split('_')[0:-3])
                 if baseid == seqid:
-                    seqnum += 1
+                    seqnum = int(record.id.split('_')[-2])+1        # We do it this way because we modify the sequences in our record in-place, which means we might originally have Domain 1-3 for a baseid, but we might delete Domain 2. Thus, because the fasta files are ordered, the last match with the baseid should contain the highest domain number, so we just +1 to it.
+                    #seqnum += 1
             # Add to fasta
             newseqname = seqid + '_Domain_' + str(seqnum) + '_' + start + '-' + stop
             return newseqname
         
-        # Let user know if this script is going to go through another iterative round
+        # Set up iteration
         print('Checking HMMER results for changes...')
-        if iterate == 0:
-            iterate = 1
-        else:
-            iterate = 2
+        iterate += 1
+        #if iterate == 0:
+        #    iterate = 1
+        #else:
+        #    iterate = 2
         # Get hmmer output file details
         align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
         hmmer_results = os.path.join(align_out_dir, 'tmp_hmmerParsed.results')
@@ -629,19 +634,23 @@ class domclust:
                             best = [unclustDoms[x].id, hmmerrange, hmmerOvlAmount, seqOvlAmount]
                 # Figure out if this hmmer region is novel
                 if best[2] == 0:                                                                            # i.e., this sequence region does not overlap anything in the unclustered domains fasta
-                    # Add unadulterated into the newDoms list for latter appending to fasta file
+                    # Add unadulterated into the unclustDoms list
                     newseqname = seqnamer(args, outdir, basename, pid, dstart, dend)
-                    newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
-                    newDoms.append([newseqname, newseq])
+                    newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                    newrec.id = newseqname
+                    unclustDoms.append(newrec)
+                    #newDoms.append([newseqname, newseq])        # Add this directly into the list
                     print('Added novel domain to file (' + newseqname + ')')
                     iterate = 0
-                elif best[2] <= 0.2:                                                                        # i.e., this sequence only has slight overlap with other sequences. I use 0.2 since, theoretically, the most that we can trim off a hit here is 39% or so. That still means most of the sequence is left intact, so it may be a genuine domain region inbetween two other regions.
-                    # Trim the mostly novel sequence and add into the newDoms list for latter appending to fasta file
+                elif best[2] <= 0.2:                                                                        # i.e., this sequence only has slight overlap with other sequences. I use 0.2 since, theoretically, the most that we can trim off a hit here is 39% or so because the secondBest hit will only overlap one side of the sequence. That still means most of the sequence is left intact, so it may be a genuine domain region inbetween two other regions.
+                    # Trim the mostly novel sequence and add into the unclustDoms list
                     newrange = hmmerrange-positionsOverlapped
                     newstart = str(min(newrange))
                     newend = str(max(newrange))
                     newseqname = seqnamer(args, outdir, basename, pid, newstart, newend)
-                    newseq = seqgrab(args, outdir, basename, pid, newstart, newend)
+                    newseq, newrec = seqgrab(args, outdir, basename, pid, newstart, newend) # Add to list
+                    newrec.id = newseqname
+                    unclustDoms.append(newrec)
                     print('Added trimmed novel domain to file (' + newseqname + ')')
                     iterate = 0
                 # Figure out if there is a (nearly) guaranteed match in the fasta file. I'm allowing secondBest to be <= 0.1 since that means our main hit is still almost certainly the region that best matches the sequence that is incorporated in the HMM.
@@ -650,7 +659,7 @@ class domclust:
                     if best[2] >= 0.9 or best[3] >= 0.9:
                         print('Good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                        newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)                 # We don't care about the newrec here since we just need to modify the existing record in place, we're not adding a new record or fusing existing ones
                         for x in range(len(unclustDoms)):
                             if unclustDoms[x].id == best[0]:
                                 unclustDoms[x].id = newseqname
@@ -659,32 +668,55 @@ class domclust:
                     elif best[2] >= 0.5 or best[3] >= 0.5:     # note that for divergent matches we use 'and'. This is important to prevent fragmentary model matches which overlap an established sequence from overwriting the full length sequence which is part of the model.
                         print('Divergent match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                        newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
                         for x in range(len(unclustDoms)):
                             if unclustDoms[x].id == best[0]:
                                 unclustDoms[x].id = newseqname
                                 unclustDoms[x].seq = newseq
-                    # Ignore poor matches
+                    # Handle poor matches
                     else:
-                        print('Ignoring highly divergent overlap: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                        print(best)
-                        print(secondBest)
+                        # Handle best case scenario
+                        if secondBest[2] == 0 and secondBest[3] == 0:
+                            print('Poor match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                            newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
+                            newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                            for x in range(len(unclustDoms)):
+                                if unclustDoms[x].id == best[0]:
+                                    unclustDoms[x].id = newseqname
+                                    unclustDoms[x].seq = newseq
+                        # Ignore worse matches
+                        else:
+                            print('Ignoring highly divergent overlap: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
+                            print(best)
+                            print(secondBest)
                 # Handle ambiguity
                 else:
-                    # Handle the best case scenario for an ambiguous match. This still means we can be pretty sure that the best region is the correct match, but the amount it overlaps other regions is starting to be concerning.
-                    if (best[2] >= 0.9 or best[3] >= 0.9) and (secondBest[2] <= 0.5 and secondBest[3] <= 0.5):
+                    # Handle the best case scenario for an ambiguous match. This still means we can be pretty sure that the best region is the correct match.
+                    if best[2] >= 0.9 and best[3] >= 0.9 and secondBest[2] <= 0.5:
                         print('Ambiguous but good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                        newseq = seqgrab(args, outdir, basename, pid, dstart, dend)
+                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
                         for x in range(len(unclustDoms)):
                             if unclustDoms[x].id == best[0]:
                                 unclustDoms[x].id = newseqname
                                 unclustDoms[x].seq = newseq
-                    # Stop handling sequences more ambiguous than this as a safety precaution
+                    # Matches that fall into this category appear to be candidates for fusing the two underlying unclustered domain sequences into a single one
                     else:
-                        print('Ambiguous overlap: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                        print(best)
-                        print(secondBest)
+                        print('Fusing overlap: ' + best[0] + ' : ' + secondBest[0])
+                        newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
+                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                        # Delete underlying sequences
+                        for i in range(0, 2):
+                            for x in range(len(unclustDoms)):
+                                if unclustDoms[x].id == best[0] or unclustDoms[x].id == secondBest[0]:
+                                    del unclustDoms[x]
+                                    break
+                        # Append new sequence into file
+                        newrec.id = newseqname
+                        unclustDoms.append(newrec)
+                        print(newseq)
+                        #print(best)
+                        #print(secondBest)
                         
         # Update fasta file
         if iterate != 2:        # If iterate == 2, then we're going to end the while loop. There may be some changes indicated by hmmer from this function, but we're assuming there will be very few since it's already been altered by hmmer once with no impact on the discovery of new domains.
@@ -693,8 +725,8 @@ class domclust:
                     seqid = unclustDoms[x].id
                     seq = str(unclustDoms[x].seq)
                     outfile.write('>' + seqid + '\n' + seq + '\n')     # The unclustered_domains.fasta should always end on a newline, so we don't need to preface our addition with '\n'
-                for dom in newDoms:
-                    outfile.write('>' + dom[0] + '\n' + dom[1] + '\n')
+                #for dom in newDoms:
+                #    outfile.write('>' + dom[0] + '\n' + dom[1] + '\n')
                 
         # Return value to dictate whether we continue the looping
         return iterate
