@@ -28,61 +28,6 @@ def validate_args(args):
                         print('I am unable to locate the input HMM database file (' + args.hmmdb + ')')
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
-        # Validate file location specifications
-        ## MMSEQS2
-        if args.mmseqs2dir != '':
-                if not os.path.isfile(os.path.join(args.mmseqs2dir, 'mmseqs')) and not os.path.isfile(os.path.join(args.mmseqs2dir, 'mmseqs.exe')):
-                        print('I cannot find "mmseqs" or "mmseqs.exe" at the location provided (' + args.mmseqs2dir + ')')
-                        quit()
-        ## CD-HIT
-        if args.cdhitdir != '':
-                if not os.path.isfile(os.path.join(args.cdhitdir, 'cd-hit')) and not os.path.isfile(os.path.join(args.cdhitdir, 'cd-hit.exe')):
-                        print('I cannot find "cd-hit" or "cd-hit.exe" at the location provided (' + args.cdhitdir + ')')
-                        quit()
-        ## HMMER3.1
-        if args.hmmer3dir != '':
-                if not os.path.isfile(os.path.join(args.hmmer3dir, 'hmmpress')) and not os.path.isfile(os.path.join(args.hmmer3dir, 'hmmpress.exe')):
-                        print('I cannot find "hmmpress" or "hmmpress.exe" at the location provided (' + args.hmmer3dir + ')')
-                        quit()
-                if not os.path.isfile(os.path.join(args.hmmer3dir, 'hmmsearch')) and not os.path.isfile(os.path.join(args.hmmer3dir, 'hmmsearch.exe')):
-                        print('I cannot find "hmmsearch" or "hmmsearch.exe" at the location provided (' + args.h3dir + ')')
-                        quit()
-        ## SignalP4.1
-        if args.signalpdir != '':
-                if not os.path.isfile(os.path.join(args.signalpdir, 'signalp')) and not os.path.isfile(os.path.join(args.signalpdir, 'signalp.exe')):
-                        print('I cannot find "signalp" at the location provided (' + args.signalpdir + ')')
-                        quit()
-        ## SEG
-        if args.segdir != '':
-                if not os.path.isfile(os.path.join(args.segdir, 'seg')) and not os.path.isfile(os.path.join(args.segdir, 'seg.exe')):
-                        print('I cannot find "seg" at the location provided (' + args.segdir + ')')
-                        quit()
-        ## COILS
-        if args.coilsdir != '':
-                if not os.path.isfile(os.path.join(args.coilsdir, 'psCoils.py')):
-                        print('I cannot find "psCoils.py" at the location provided (' + args.coilsdir + ')')
-                        quit()
-        ## MAFFT
-        if args.mafftdir != '':
-                if platform.system() == 'Windows':
-                        if not os.path.isfile(os.path.join(args.mafftdir, 'mafft.bat')):
-                                print('You are using a Windows OS, but I cannot find "mafft.bat" at the location provided (' + args.mafftdir + ')')
-                                quit()
-                else:
-                        if not os.path.isfile(os.path.join(args.mafftdir, 'mafft')) and not os.path.isfile(os.path.join(args.mafftdir, 'mafft.exe')):
-                                print('You are using a non-Windows OS, but I cannot find "mafft" or "mafft.exe" at the location provided (' + args.mafftdir + ')')
-                                quit()
-        ## CYGWIN
-        if args.cygwindir != '':
-                if platform.system() == 'Windows':
-                        if not os.path.isfile(os.path.join(args.cygwindir, 'bash.exe')):
-                                print('You are using a Windows OS, but I cannot find "bash.exe" at the location provided (' + args.cygwindir + ')')
-                                quit()
-        ## PYTHON2
-        if args.python2dir != '':
-                if not os.path.isfile(os.path.join(args.python2dir, 'python')) and not os.path.isfile(os.path.join(args.python2dir, 'python.exe')):
-                        print('I cannot find "python" or "python.exe" at the location provided (' + args.python2dir + ')')
-                        quit()
         # Validate program execution is successful
         program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
         program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
@@ -90,22 +35,18 @@ def validate_args(args):
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
         program_execution_check(os.path.join(args.segdir, 'seg'))
         program_execution_check(os.path.join(args.python2dir, 'python -h'))
-        py2Exe = python_version_check(args.python2dir)
-        program_execution_check(py2Exe + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
-        
-        
+        python_version_check(args.python2dir)
+        program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
         if platform.system() == 'Windows':
-                 program_execution_check(os.path.join(args.mafftdir, 'mafft.bat -h'))
+                program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
+        if platform.system() == 'Windows':
+                cygwin_program_execution_check(os.path.abspath(args.outdir), args.cygwindir, args.mafftdir, 'mafft.bat -h')
         else:
                 program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
         if platform.system() == 'Windows':
-                 program_execution_check(os.path.join(args.cygwindir, 'bash.exe'))
-        if platform.system() == 'Windows':
-                cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
+                cygwin_program_execution_check(os.path.abspath(args.outdir), args.cygwindir, args.signalpdir, 'signalp -h')
         else:
                 program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
-        
-        
         # Validate integer arguments
         intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA']
         for entry in intArgs:
@@ -114,19 +55,21 @@ def validate_args(args):
                                 print('You have quotation marks surrounding your value for the ' + entry + ' argument. Make sure these don\'t exist on your command-line input or in the config file and try again.')
                                 quit()
                         if not vars(args)[entry].isdigit():                             # If they are a string, we need them to be able to become an integer; this checks for that and stops program execution if the check fails
-                                print(entry + ' argument must be an integer. You specified ' + vars(args)[entry] + ' on command-line or in the config file. Fix this and try again.')
+                                print(entry + ' argument must be an integer. You specified "' + vars(args)[entry] + '" on command-line or in the config file. Fix this and try again.')
                                 quit()
+                        else:
+                                vars(args)[entry] = int(vars(args)[entry])              # Permanently change the type here
         # Validate float arguments
         floatArgs = ['cdc', 'cdas', 'cdal', 'hmmeval', 'hmmevalnov', 'mms2eval']
         for entry in floatArgs:
-                if type(vars(args)[entry]) == str:
+                if type(vars(args)[entry]) == str:                                      # Comments are as above for integer validation
                         if "'" in vars(args)[entry] or '"' in vars(args)[entry]:
                                 print('You have quotation marks surrounding your value for the ' + entry + ' argument. Make sure these don\'t exist on your command-line input or in the config file and try again.')
                                 quit()
                         try:
-                                float(vars(args)[entry])
+                                vars(args)[entry] = float(vars(args)[entry])
                         except:
-                                print(entry + ' argument must be able to become a float value (i.e., a number with decimal places). You specified ' + vars(args)[entry] + ' on command-line or in the config file. Fix this and try again.')
+                                print(entry + ' argument must be able to become a float value (i.e., a number with decimal places). You specified "' + vars(args)[entry] + '" on command-line or in the config file. Fix this and try again.')
                                 quit()
         # Validate arguments with choice specification
         if args.signalporg not in ['euk', 'gram-', 'gram+', 'EUK', 'GRAM-', 'GRAM+']:
@@ -151,14 +94,17 @@ def program_execution_check(cmd):
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
         if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage'):     # Need this extra check for seg since it puts its usage information into stderr rather than stdout
-                print('Failed to execute program "' + cmd + '". Is this executable in the location specified, or does the executable exist? I won\'t be able to run properly if I can\'t execute this program.')
+                print('Failed to execute program "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
+                print('---')
+                print('stderr is below for debugging purposes.')
+                print(cmderr.decode("utf-8"))
                 print('Program closing now.')
-                raise Exception
+                quit()
 
 def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
         import subprocess
         # Format script for cygwin execution
-        scriptText = '"' + os.path.join(exeDir, exeFile) + '" -h'
+        scriptText = os.path.join(exeDir, exeFile)
         scriptFile = file_name_gen('tmpscript', '.sh')
         with open(os.path.join(outDir, scriptFile), 'w') as fileOut:
                 fileOut.write(scriptText)
@@ -166,53 +112,23 @@ def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
         cmd = os.path.join(cygwinDir, 'bash') + ' -l -c ' + os.path.join(outDir, scriptFile).replace('\\', '/')
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
-        if cmderr.decode("utf-8") != '':
-                print('Failed to execute program "' + cmd + '". Is this executable in the location specified, or does the executable exist? I won\'t be able to run properly if I can\'t execute this program.')
+        if cmderr.decode("utf-8") != '' and not 'cannot open -h' in cmderr.decode("utf-8").lower():      # Need this extra check for mafft since we can't get error-free output without giving an actual fasta file input
+                print('Failed to execute ' + exeFile + ' program via Cygwin using "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
+                print('---')
+                print('stderr is below for debugging purposes.')
+                print(cmderr.decode("utf-8"))
                 print('Program closing now.')
-                raise Exception
+                quit()
 
 def python_version_check(pythonDir):
         import subprocess, os
-        if pythonDir == '':
-                cmd = 'python --version'
-        else:
-                cmd = os.path.join(pythonDir, 'python') + ' --version'
+        cmd = os.path.join(pythonDir, 'python') + ' --version'
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
         cmderr = cmderr.decode("utf-8")
-        if 'Python 3.' in cmderr:
-                try:
-                        if pythonDir == '':
-                                program_execution_check('python2')
-                                return 'python2'
-                        else:
-                                program_execution_check(os.path.join(pythonDir, 'python2'))
-                                return os.path.join(pythonDir, 'python2')
-                except:
-                        print('I\'m unable to find a Python 2 executable.')
-                        print('You didn\'t provide a path so I looked in your PATH for "python", and this was a Python 3.X version.')
-                        print('I then checked for "python2" and didn\'t find it... Long story short, you need to specify an explicit path to a Python 2 version if it isn\'t discoverable in your path.')
-                        print('Program closing now.')
-                        quit()
-        elif 'Python 2.' not in cmderr:
-                try:
-                        if pythonDir == '':
-                                program_execution_check('python2')
-                                return 'python2'
-                        else:
-                                program_execution_check(os.path.join(pythonDir, 'python2'))
-                                return os.path.join(pythonDir, 'python2')
-                except:
-                        print('I\'m unable to find a Python 2 executable.')
-                        print('You didn\'t provide a path so I looked in your PATH for "python", and this was a version that did not appear to be a 3.X or 2.X version.')
-                        print('I then checked for "python2" and didn\'t find it... Long story short, you need to specify an explicit path to a Python 2 version if it isn\'t discoverable in your path.')
-                        print('Program closing now.')
-                        quit()
-        else:
-                if pythonDir == '':
-                        return 'python'
-                else:
-                        return os.path.join(pythonDir, 'python')
+        if 'Python 2.' not in cmderr:
+                print('The version of Python specified in directory "' + pythonDir + '" doesn\'t appear to be a Python 2.X version. Program will fail when running psCoils. Fix this parameter and try again.')
+                quit()
 
 def output_arg_handling(args):
         # Handle output directory
@@ -237,7 +153,7 @@ def output_arg_handling(args):
                                 configFiles.sort(key = lambda x: -int(x.rsplit('_run', maxsplit=1)[1].split('.config')[0]))
                                 args.config = os.path.join(args.outdir, configFiles[0])
                                 print('You didn\'t specify a config file on command-line, so I\'m going to use the most recent config file present in this directory.')
-                                print('This looks like "' + args.config + '"... does this seem right to you? If it isn\'t, specify the config file explicitly on the command-line.')
+                                print('This looks like "' + os.path.abspath(args.config) + '"... does this seem right to you? If it isn\'t, specify the config file explicitly on the command-line.')
                 else:
                         # If we're resuming a run and we HAVE specified a config file, warn the user that any changes could have unpredictable results
                         print('You specified a config file on the command-line which I was able to find. However, note that if this config file differs to the one used in the original program run, unexpected results may occur.')
@@ -260,11 +176,18 @@ def default_parameter_dict(inputKey):
                          'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n',
                          'minsize': 3,'minsample': 2, 'leaf': False, 'singleclust': False,
                          'numiters': 0, 'cleanAA': 30,
-                         'fasta': None, 'outdir': None, 'hmmdb': None, 'config': None, 'coilsdir': None, 'python2dir': None}      # This lets us know that we shouldn't be specifying defaults for these arguments
+                         #'fasta': , 'outdir': None, 'config': None,         
+                         'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
+        mandatoryParams = {'fasta': None, 'outdir': None, 'config': None}       # By separating these, this lets us know that these shouldn't be defaulted and shouldn't be in the config file at all
+        cmdLineOnlyParams = {'generate_config': None, 'benchmark': None}        # We also separate these since they should not be in the config file but aren't mandatory
         if inputKey in defaultParams:
                 return defaultParams[inputKey]
+        elif inputKey in mandatoryParams:
+                return 'mandatory'
+        elif inputKey in cmdLineOnlyParams:
+                return 'cmdonly'
         else:
-                return None
+                return 'unknown'
 
 def config_file_args_update(args, configFile):
         # Ensure that configFile is discoverable
@@ -276,20 +199,20 @@ def config_file_args_update(args, configFile):
         with open(configFile, 'r') as fileIn:
                 for line in fileIn:
                         line = line.rstrip('\r\n')
-                        # Skip empty lines; they shouldn't be here, but no harm done (yet)
+                        # Skip empty lines / comment lines that might have been added in by the user
                         if line.startswith('#') or line == ' ' or line  == '':
                                 continue
                         sl = line.split('=')
                         argname = sl[0].rstrip(' ')
                         argvalue = sl[1].lstrip(' ')
                         # Check if this argument is used by the program
-                        if default_parameter_dict(argname) == None:
+                        if default_parameter_dict(argname) == 'unknown':
                                 print('Your config file is formatted incorrectly. An argument "' + argname + '" is present in this file but not recognised by this program.')
                                 print('In the interest of ensuring this program works correctly, you need to make sure this config file is accurate and only contains parameters for the operation of this program.')
                                 print('I\'m going to exit now and leave the rest up to you.')
                                 quit()
                         # Make sure this argument belongs in a config file
-                        elif default_parameter_dict(argname) == False:
+                        elif default_parameter_dict(argname) == 'mandatory':
                                 print('Your config file is formatted incorrectly. An argument "' + argname + '" is present in this file which should either be specified explicitly on the command-line, or contains a reference to a config file within the config file itself.')
                                 print('In the interest of ensuring this program works correctly, you need to make sure this config file is accurate and does not refer to mandatory arguments that do not belong in the config file.')
                                 print('I\'m going to exit now and leave the rest up to you.')
@@ -306,6 +229,19 @@ def defaults_args_update(args):
                         if type(default) != None:                     # The other 'defaults' that are booleans are to be ignored
                                 vars(args)[key] = default
         return args
+
+def config_file_generation(args):
+        # Get our config file name
+        configFile = file_name_gen(os.path.join(os.path.abspath(args.outdir), args.outdir + '_run'), '.config')
+        print(configFile)
+        # Generate the config file
+        with open(configFile, 'w') as fileOut:
+                for key, value in vars(args).items():
+                        # Skip mandatory arguments
+                        if default_parameter_dict(key) == 'mandatory' or default_parameter_dict(key) == 'cmdonly':
+                                continue
+                        # Write everything else to file
+                        fileOut.write(key + ' = ' + str(value) + '\n')
 
 ## General purpose arguments
 def file_name_gen(prefix, suffix):
@@ -438,7 +374,7 @@ args = p.parse_args()
 # Handle output directory for a new or existing run
 args = output_arg_handling(args)
 
-# Combine command-line & config file arguments, filling in defaults for any gaps
+# Combine command-line & config file arguments
 if args.config != None:
         args = config_file_args_update(args, args.config)
 
@@ -449,9 +385,9 @@ args = defaults_args_update(args)
 validate_args(args)
 
 # Generate a config file within the output directory
-
+config_file_generation(args)
 if args.generate_config:
-        print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + args.outdir)
+        print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + os.path.abspath(args.outdir))
         quit()
 
 stophere
