@@ -40,11 +40,11 @@ def validate_args(args):
         if platform.system() == 'Windows':
                 program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
         if platform.system() == 'Windows':
-                cygwin_program_execution_check(os.path.abspath(args.outdir), args.cygwindir, args.mafftdir, 'mafft.bat -h')
+                cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
         else:
                 program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
         if platform.system() == 'Windows':
-                cygwin_program_execution_check(os.path.abspath(args.outdir), args.cygwindir, args.signalpdir, 'signalp -h')
+                cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
         else:
                 program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
         # Validate integer arguments
@@ -136,7 +136,7 @@ def output_arg_handling(args):
                 print('You have not specified an existing outdir, so that means we are starting a new run.')
                 os.mkdir(args.outdir)
         else:
-                # Config file
+                # Handle config file within existing output directory
                 print('You have specified an existing outdir, so that means we are resuming a run.')
                 if args.config == None:
                         # If we're resuming a run and we haven't specified a config file, find the config file present in the outdir; a standardised naming scheme is used, so we should be able to find it
@@ -158,6 +158,8 @@ def output_arg_handling(args):
                         # If we're resuming a run and we HAVE specified a config file, warn the user that any changes could have unpredictable results
                         print('You specified a config file on the command-line which I was able to find. However, note that if this config file differs to the one used in the original program run, unexpected results may occur.')
                         print('I\'m going to assume you know what you\'re doing (even though you should just allow me to find the config file within the outdir). If weird errors occur, remember this message when you\'re scratching your head.')
+        # Alter our output directory value to make sure it is the absolute path
+        args.outdir = os.path.abspath(args.outdir)
         return args
 
 def default_parameter_dict(inputKey):
@@ -232,8 +234,7 @@ def defaults_args_update(args):
 
 def config_file_generation(args):
         # Get our config file name
-        configFile = file_name_gen(os.path.join(os.path.abspath(args.outdir), args.outdir + '_run'), '.config')
-        print(configFile)
+        configFile = file_name_gen(os.path.join(args.outdir, os.path.basename(args.outdir) + '_run'), '.config')
         # Generate the config file
         with open(configFile, 'w') as fileOut:
                 for key, value in vars(args).items():
@@ -371,6 +372,8 @@ p.add_argument("-generate_config", dest="generate_config", action = "store_true"
 
 args = p.parse_args()
 
+#### DATA PREPARATION
+
 # Handle output directory for a new or existing run
 args = output_arg_handling(args)
 
@@ -387,98 +390,27 @@ validate_args(args)
 # Generate a config file within the output directory
 config_file_generation(args)
 if args.generate_config:
-        print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + os.path.abspath(args.outdir))
+        print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + args.outdir)
         quit()
 
-stophere
-
-# Get the basename of the fasta file
-fasta_base = '.'.join(os.path.basename(cmdargs.fasta).split('.')[0:-1])
-raw_fasta = cmdargs.fasta                                                       # We just use this value once when running CD-HIT, since we use '.fasta' for all relevant output files but the user input may have a different suffix. It also allows us to easily read in fasta files from directories not in the current working dir.
-
-# Merge text file and command-line arguments if applicable
-args = vars(cmdargs)
-param_name = os.path.join(os.getcwd(), outputDir, outputDir + '_parameters.txt')
-changes = 'n'
-if os.path.isfile(param_name):
-        with open(param_name, 'r') as txtparams:
-                for line in txtparams:
-                        line = line.rstrip('\n').rstrip('\r')
-                        if line.startswith('#') or line == ' ' or line == '':
-                                continue
-                        sl = line.split('->')
-                        argname = sl[0]
-                        argvalue = sl[1].lstrip(' ').rstrip(' ')
-                        # Check if this argument is used by the program
-                        try:
-                                args[argname]
-                        except KeyError:                                                                        # This is OK, it just means that there is a line in the parameters file that doesn't correspond to an argument in this program
-                                continue                              
-                        # Compare text to command-line
-                        if argvalue != '' and args[argname] != None and argvalue != str(args[argname]):         # Need to compare them as strings since the text-file doesn't alter the value type like argparse does for some arguments
-                                changes = 'y'
-                        elif argvalue != '' and args[argname] == None:
-                                args[argname] = argvalue
-
-# Validate user inputs to make sure things are sensible
-## None values
-close = 'n'
-for key, value in args.items():
-        # Special handling of cygwin argument
-        if platform.system() != 'Windows' and value == None:
-                continue
-        if value == None:
-                print(key + ' is missing an argument. Edit your parameter file, or provide this on the command-line.')
-                close = 'y'
-if close == 'y':
-        quit()
-## Possible new checks
-
-# Create or update the text file of parameters if necessary [TO-DO: FIX ISSUES WITH INTEGRATING TEXT-FILE PARAMETERS AND CMD-LINE PARAMETERS]
-if not os.path.isfile(param_name) or changes == 'y':
-        param_text = []
-        for key, value in args.items():
-                param_text.append(key + '->' + str(value))
-        param_text = '\n'.join(param_text)
-        with open(param_name, 'w') as param_out:
-                param_out.write(param_text)
-
-print('All programs can be found and the provided arguments appear to be sound. If the programs are not installed properly, however, errors will occur.')
-
-#### DATA PREPARATION
 print('### PROGRAM START ###')
 print(time.ctime())
 
-
-## SET UP THE WORKING DIRECTORY
-#file_name_gen(prefix, suffix)
-
 ### RUN CD-HIT
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_cdhit.fasta')):
-        domfind.runcdhit(args, outputDir, raw_fasta, fasta_base)
+fastaBase = os.path.basename(args.fasta).rsplit('.', maxsplit=1)[0]
+if not os.path.isfile(os.path.join(args.outdir, fastaBase + '_cdhit.fasta')):
+        params = (args.cdc, args.cdn, args.cdg, args.cdas, args.cdal, args.cdm, args.threads)
+        domfind.run_cdhit(args.cdhitdir, args.outdir, args.fasta, fastaBase + '_cdhit.fasta', params)
 
 ### CHUNK CD-HIT FOR THREADING
-# Check if this is necessary
-chunking = 'n'
-if int(args['threads']) > 1:
-        chunk_names = []
-        for i in range(0, int(args['threads'])):
-                chunk_names.append(os.path.join(os.getcwd(), outputDir, fasta_base + '_cdhit_chunk' + str(i+1) + '.fasta'))
-        for name in chunk_names:
-                if not os.path.isfile(name):
-                        chunking = 'y'
-                        break
-        # Check one step ahead to see if a previous run was performed with more threads
-        if os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_cdhit_chunk' + str(i+2) + '.fasta')):
-                print('There are more "cdhit_chunk#" chunk files in the output directory than should exist given the number of threads provided in your argument')
-                print('This probably means you have leftover files from a previous run which used more threads. Delete all of these "cdhit_chunk#" files to re-run with less threads, or alternatively provide a -threads argument equivalent to the number of chunk files in the output directory')
-                quit()
-        if chunking == 'y':
-                domfind.chunk_fasta(args, outputDir, fasta_base + '_cdhit')
-                          
+chunkFiles = domfind.chunk_fasta(args.outdir, os.path.join(args.outdir, fastaBase + '_cdhit.fasta'), '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
+
 ### RUN HMMER3
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmer.results')):
-        domfind.runhmmer3(args, outputDir, fasta_base)
+if not os.path.isfile(os.path.join(os.getcwd(), args.outdir, fastaBase + '_cdhit_hmmer.results')):
+        domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, os.path.join(args.outdir, fastaBase + '_cdhit.fasta'))
+
+recodedTilHere
+
 if args['benchmark'] == 'n':
         if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmerParsed.results')):
                 domfind.hmmerparse(args, args['hmmeval'], outputDir, fasta_base)
