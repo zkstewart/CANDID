@@ -112,6 +112,7 @@ def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
         cmd = os.path.join(cygwinDir, 'bash') + ' -l -c ' + os.path.join(outDir, scriptFile).replace('\\', '/')
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
+        os.remove(os.path.join(outDir, scriptFile))   # Clean up temporary file
         if cmderr.decode("utf-8") != '' and not 'cannot open -h' in cmderr.decode("utf-8").lower():      # Need this extra check for mafft since we can't get error-free output without giving an actual fasta file input
                 print('Failed to execute ' + exeFile + ' program via Cygwin using "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
                 print('---')
@@ -396,33 +397,44 @@ if args.generate_config:
 print('### PROGRAM START ###')
 print(time.ctime())
 
-### RUN CD-HIT
+### SET UP VALUES FOR FILE NAMES
 fastaBase = os.path.basename(args.fasta).rsplit('.', maxsplit=1)[0]
-if not os.path.isfile(os.path.join(args.outdir, fastaBase + '_cdhit.fasta')):
+outputBase = os.path.join(args.outdir, fastaBase)
+
+### RUN CD-HIT
+if not os.path.isfile(outputBase + '_cdhit.fasta'):
         params = (args.cdc, args.cdn, args.cdg, args.cdas, args.cdal, args.cdm, args.threads)
         domfind.run_cdhit(args.cdhitdir, args.outdir, args.fasta, fastaBase + '_cdhit.fasta', params)
 
 ### CHUNK CD-HIT FOR THREADING
-chunkFiles = domfind.chunk_fasta(args.outdir, os.path.join(args.outdir, fastaBase + '_cdhit.fasta'), '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
+chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
 
 ### RUN HMMER3
-if not os.path.isfile(os.path.join(os.getcwd(), args.outdir, fastaBase + '_cdhit_hmmer.results')):
-        domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, os.path.join(args.outdir, fastaBase + '_cdhit.fasta'))
+if not os.path.isfile(outputBase + '_cdhit_hmmer.results'):
+        domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, outputBase + '_cdhit.fasta')
 
-recodedTilHere
+if not args.benchmark:
+        if not os.path.isfile(outputBase + '_hmmerParsed.results'):
+                domDict = domfind.hmmer_parse(outputBase + '_cdhit_hmmer.results', args.hmmeval, args.skip)
+                domfind.hmmer_dict_to_file(domDict, outputBase + '_hmmerParsed.results')
+                domDict = None
+#else:
+#        if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmerParsed.results')):
+#                benchparse.benchparse(args, outputDir, fasta_base)
 
-if args['benchmark'] == 'n':
-        if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmerParsed.results')):
-                domfind.hmmerparse(args, args['hmmeval'], outputDir, fasta_base)
-else:
-        if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmerParsed.results')):
-                benchparse.benchparse(args, outputDir, fasta_base)
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_domCut.fasta')):
-        domfind.hmmercutter(args, outputDir, fasta_base)
+if not os.path.isfile(outputBase + '_domCut.fasta'):
+        hmmerCoordDict = domfind.hmmer_coord_parse(outputBase + '_hmmerParsed.results')
+        domfind.hmmer_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
 
 ### RUN SIGNALP
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_signalp.fasta')):
-        domfind.runsignalp(args, outputDir, fasta_base)
+if not os.path.isfile(outputBase + '_signalp.fasta'):
+        if not os.path.isfile(outputBase + '_signalp.results'):
+                domfind.run_signalp(args.signalpdir, args.cygwindir, args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)
+        sigpPredDict = domfind.parse_sigp_results(outputBase + '_signalp.results')
+        domfind.mask_fasta_by_sigp(sigpPredDict, outputBase + '_domCut.fasta', outputBase + '_signalp.fasta')
+        sigpPredDict = None
+
+recodedTilHere
 
 ### RUN SEG AND COILS
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_segcoils.fasta')):

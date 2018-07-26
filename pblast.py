@@ -63,239 +63,241 @@ class domfind:
                 hmmout, hmmerr = run_hmmer3.communicate()
                 if hmmerr.decode("utf-8") != '':
                         raise Exception('hmmsearch error text below' + str(hmmerr.decode("utf-8")))
-                
-        def hmmerparse(args, evalarg, outdir, basename):
-                # Script modified from one written by Andrzej Zielezinski (http://www.staff.amu.edu.pl/~andrzejz/)
+
+        def hmmer_parse(domtbloutFile, evalueCutoff, skip):
+                # Set up
                 import os
+                domDict = {}                            # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
                 print('Parsing hmmsearch output...')
-                # Load in file
-                with open(os.path.join(os.getcwd(), outdir, basename + '_hmmer.results'), 'r') as fh:
-                        domdict = {}
-                        # Loop through file
-                        for line in fh:
-                                if line.startswith('#'): continue  # Skip header and footer of a domtblout file.
-                                if line == '' or line == '\n': continue         # Skip blank lines, shouldn't exist, but can't hurt
-                                sl = line.split()
-                                evalue = float(sl[12])
-                                if evalue > float(evalarg):
+                # Main function
+                with open(domtbloutFile, 'r') as fileIn:
+                        for line in fileIn:
+                                # Skip unnecessary lines
+                                if line.startswith('#') or line == '' or line == ' ' or line == '\n' or line == '\r\n':
                                         continue
+                                # Parse line and skip if evalue is not significant
+                                sl = line.rstrip('\r\n').split()
+                                evalue = float(sl[12])
+                                if evalue > float(evalueCutoff):
+                                        continue
+                                # Get relevant details
                                 pid = sl[0]
+                                dstart = int(sl[17])
+                                dend = int(sl[18])
+                                # Special handling for domain IDs
                                 if sl[3].startswith('cath'):
                                         did = sl[3]
                                 else:
                                         did = os.path.basename(sl[3])                   # Some of the databases will have the full path to the domain ID, so we want to get rid of those. We handle cath especially since cath's domain IDs don't exhibit this behaviour but do incorporate a '/' in their ID
                                 # Optional skipping of CATH/SUPERFAMILY databases
-                                if args['skip'] != 'noskip':
-                                        if args['skip'] == 'cath' and sl[3].startswith('cath'):
+                                if skip != 'noskip':
+                                        if skip == 'cath' and sl[3].startswith('cath'):
                                                 continue
-                                        elif args['skip'] == 'superfamily':
+                                        elif skip == 'superfamily':
                                                 try:
                                                         int(did)                # SUPERFAMILY is the only database that has purely integer domain IDs
                                                         continue
                                                 except ValueError:
-                                                        doNothing = ''
-                                        elif args['skip'] == 'both':
+                                                        None
+                                        elif skip == 'both':
                                                 if sl[3].startswith('cath'):
                                                         continue
                                                 try:
                                                         int(did)
                                                         continue
                                                 except ValueError:
-                                                        doNothing = ''
-                                # End of optional skipping
-                                dstart = int(sl[17])
-                                dend = int(sl[18])
-                                # Add into domain dictionary        # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
-                                if pid not in domdict:                  # This unfortunately serves as the only aspect of this script that should pose potential problems for memory use. To my knowledge there is no way to re-order hmmsearch output into the same format as hmmscan that is both fast and memory efficient.
-                                        domdict[pid] = [[dstart, dend, did]]
+                                                        None
+                                # Add into domain dictionary
+                                if pid not in domDict:
+                                        domDict[pid] = [[did, dstart, dend, evalue]]
                                 else:
-                                        domdict[pid].append([dstart, dend, did])
-                # Produce output
-                ongoingCount = 0
-                outname = os.path.join(os.getcwd(), outdir, basename + '_hmmerParsed.results')
-                outputText = []
-                with open(outname, 'w') as outFile:
-                        for key, value in domdict.items():
-                                value.sort()
+                                        domDict[pid].append([did, dstart, dend, evalue])
+                return domDict
+        
+        def hmmer_dict_to_file(domDict, outputFileName):
+                with open(outputFileName, 'w') as fileOut:
+                        for key, value in domDict.items():
                                 for domregion in value:
-                                        outFile.write(key + '\t' + str(domregion[0]) + '\t' + str(domregion[1]) + '\t' + domregion[2] + '\n')
-                
-        def hmmercutter(args, outdir, basename):
-                import os
-                from Bio import SeqIO
-                from itertools import groupby
-                print('Masking known domains from sequences...')
-                # Get relevant inputs
-                fileName = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
-                outputFileName = os.path.join(os.getcwd(), outdir, basename + '_domCut.fasta')
-                pfamName = os.path.join(os.getcwd(), outdir, basename + '_hmmerParsed.results')
-                # Load in files
-                sequences = SeqIO.parse(open(fileName, 'rU'), 'fasta')
-                pfams = open(pfamName, 'r')
-                # Load the pfam domtblout file as a groupby iterator and sort out overlapping domains
-                grouper = lambda x: x.split('\t')[0]
-                pfamDict = {}
-                for key, group in groupby(pfams, grouper):
-                        coords = []
-                        for entry in group:
-                                line = entry.rstrip('\n').split('\t')
-                                coords.append((int(line[1]), int(line[2])))
-                        # Remove identical coordinates and re-sort the list
-                        coords = list(set(coords))
-                        coords.sort()
-                        # Join overlaps together into a single region
-                        overlapping = 'y'
-                        while True:
-                                if len(coords) == 1 or overlapping == 'n':
-                                        break
-                                for y in range(len(coords)-1):
-                                        if coords[y+1][0] > coords[y][1]+1 and y != len(coords)-2:         # Adding +1 to coords[y][1] means we'll collapse domain ranges like (100-297, 298-400) into a single value
-                                                continue
-                                        elif coords[y+1][0] <= coords[y][1]+1:
-                                                highest = max(coords[y][1], coords[y+1][1])
-                                                coords[y] = [coords[y][0], highest] ### ERROR? ### WAS [coords[0][0], highest]
-                                                del coords[y+1]
-                                                break
-                                        else:                                                                                                                   # We need the y != check above since we need to set an exit condition when no more overlaps are present. The if/elif will always trigger depending on whether there is/is not an overlap UNLESS it's the second last entry and there is no overlap. In this case we finally reach this else clause, and we trigger an exit.
-                                                overlapping = 'n'
-                                                break
-                        # Retain results for subsequent cutting in a dictionary
-                        pfamDict[key] = coords
+                                        fileOut.write(key + '\t' + str(domregion[1]) + '\t' + str(domregion[2]) + '\t' + domregion[0] + '\n')
 
+        def hmmer_coord_parse(parsedHmmerFile):
+                # Set up
+                from itertools import groupby
+                # Declare function integral to this function
+                def coord_merge(coordList, coord):
+                        # Merge the new coord into the current coordList
+                        merged = 'n'
+                        if coord != None:
+                                for i in range(len(coordList)):
+                                        pair1 = coordList[i]
+                                        pair2 = coord
+                                        # Detect overlap
+                                        if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                                # Merge coords
+                                                start = min([pair1[0], pair2[0]])
+                                                end = max([pair1[1], pair2[1]])
+                                                coordList[i] = [start, end]
+                                                merged = 'y'
+                                                break
+                        # If we didn't merge this coord into an existing one, add it into the list
+                        if merged == 'n' and coord != None:
+                                coordList.append(coord)
+                        # If we did merge it, re-process the coordList to merge anything else that needs it
+                        else:
+                                for x in range(len(coordList)-1,-1,-1):
+                                        if x != 0:
+                                                pair1 = coordList[x]
+                                                pair2 = coordList[x-1]
+                                                # Detect overlap
+                                                if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                                        # Merge coords
+                                                        start = min([pair1[0], pair2[0]])
+                                                        end = max([pair1[1], pair2[1]])
+                                                        coordList[x-1] = [start, end]
+                                                        # Cull entry
+                                                        del coordList[x]
+                        # Sort coordList and return
+                        coordList.sort()
+                        return coordList
+                # Main function
+                hmmerDict = {}
+                grouper = lambda x: x.split('\t')[0]
+                with open(parsedHmmerFile, 'r') as fileIn:
+                        for key, group in groupby(fileIn, grouper):
+                                coords = []
+                                for line in group:
+                                        sl = line.rstrip('\r\n').split('\t')
+                                        coord_merge(coords, [int(sl[1]), int(sl[2])])
+                                # Retain results for subsequent cutting in a dictionary
+                                hmmerDict[key] = coords
+                return hmmerDict
+        
+        def hmmer_cutter(fastaFile, hmmerCoordDict, outputFileName):
+                # Set up
+                from Bio import SeqIO
                 # Remove domain regions from fasta
+                records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
                 with open(outputFileName, 'w') as outFile:
-                        for sequence in sequences:
+                        for record in records:
                                 # Processing steps
-                                seqName = sequence.id
-                                if seqName not in pfamDict:
-                                        outFile.write('>' + seqName + '\n' + str(sequence.seq) + '\n')
+                                seqName = record.id
+                                if seqName not in hmmerCoordDict:
+                                        outFile.write('>' + seqName + '\n' + str(record.seq) + '\n')
                                 else:
                                         # Mask the domain regions
-                                        currSeq = str(sequence.seq)
-                                        for coord in pfamDict[seqName]:
-                                                currSeq = currSeq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + currSeq[coord[1]:]
+                                        currSeq = str(record.seq)
+                                        for coord in hmmerCoordDict[seqName]:
+                                                currSeq = currSeq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + currSeq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
                                         outFile.write('>' + seqName + '\n' + currSeq + '\n')
 
         ### SIGNALP (Loads in CD-HIT results for running program, then modifies HMMER3 cut results)
-        def runsignalp(args, outdir, basename):
-                import os, subprocess, platform, threading
-                from Bio import SeqIO
-                def signalp_threading(args, outdir, basename, thread):
-                        # Format signalP script file for use on unix systems and with cygwin
-                                script_text = '"' + os.path.join(args['signalpdir'], 'signalp') + '" -t ' + args['signalporg'] + ' -f short -n "' + os.path.join(os.getcwd(), outdir, basename + '_signalp_chunk' + str(thread) + '.results"') + ' "' + os.path.join(os.getcwd(), outdir, basename + '_cdhit_chunk' + str(thread) + '.fasta"') # Loads in CD-HIT results here intentionally
-                                if platform.system() == 'Windows':
-                                        signalpscript_location = os.path.join(os.getcwd(), outdir, basename + '_signalpScript' + str(thread) + '.sh')
-                                        signalpscript = open(signalpscript_location, 'w')
-                                        signalpscript.write(script_text.replace('\\', '/'))
-                                        signalpscript.close()
-                                # Run signalP depending on operating system
-                                if platform.system() == 'Windows':
-                                        cmd = os.path.join(args['cygwindir'], 'bash') + ' -l -c ' + signalpscript_location.replace('\\', '/')
-                                        runsigP = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
-                                        sigpout, sigperr = runsigP.communicate()
-                                        for line in sigperr.decode("utf-8").split('\n'):
-                                                if line.rstrip('\n') == '# No sequences predicted with a signal peptide':
-                                                        with open(os.path.join(os.getcwd(), outdir, basename + '_signalp_chunk' + str(thread) + '.results'), 'w') as null_out:
-                                                                null_out.write(line)
-                                                        break
-                                                elif not 'is an unknown amino amino acid' in line and not line == '':
-                                                        print(line + '<')
-                                                        print('--')
-                                                        raise Exception('SignalP error (thread ' + str(thread) + ') text below\n' + str(sigperr.decode("utf-8")))
-                                else:
-                                        runsigP = subprocess.Popen(script_text, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
-                                        sigpout, sigperr = runsigP.communicate()
-                                        for line in sigperr.decode("utf-8").split('\n'):
-                                                if line.rstrip('\n') == '# No sequences predicted with a signal peptide':
-                                                        with open(os.path.join(os.getcwd(), outdir, basename + '_signalp_chunk' + str(thread) + '.results'), 'w') as null_out:
-                                                                null_out.write(line)
-                                                        break
-                                                elif not 'is an unknown amino amino acid' in line and not line == '':
-                                                        print(line + '<')
-                                                        print('--')
-                                                        raise Exception('SignalP error (thread ' + str(thread) + ') text below\n' + str(sigperr.decode("utf-8")))
-                def signalp_1thread(args, outdir, basename):
-                        if not os.path.isfile(os.path.join(os.getcwd(), outdir, basename + '_signalp.results')):
-                                # Format signalP script file for use on unix systems and with cygwin
-                                script_text = '"' + os.path.join(args['signalpdir'], 'signalp') + '" -t ' + args['signalporg'] + ' -f short -n "' + os.path.join(os.getcwd(), outdir, basename + '_signalp.results"') + ' "' + os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta"') # Loads in CD-HIT results here intentionally
-                                if platform.system() == 'Windows':
-                                        signalpscript_location = os.path.join(os.getcwd(), outdir, basename + '_signalpScript.sh')
-                                        signalpscript = open(signalpscript_location, 'w')
-                                        signalpscript.write(script_text.replace('\\', '/'))
-                                        signalpscript.close()
-                                # Run signalP depending on operating system
-                                if platform.system() == 'Windows':
-                                        cmd = os.path.join(args['cygwindir'], 'bash') + ' -l -c ' + signalpscript_location.replace('\\', '/')
-                                        runsigP = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
-                                        sigpout, sigperr = runsigP.communicate()
-                                        for line in sigperr.decode("utf-8").split('\n'):
-                                                if line.rstrip('\n') == '# No sequences predicted with a signal peptide':
-                                                        with open(os.path.join(os.getcwd(), outdir, basename + '_signalp.results'), 'w') as null_out:
-                                                                null_out.write(line)
-                                                        break
-                                                elif not 'is an unknown amino amino acid' in line and not line == '':
-                                                        print(line + '<')
-                                                        print('--')
-                                                        raise Exception('SignalP error text below\n' + str(sigperr.decode("utf-8")))
-                                else:
-                                        runsigP = subprocess.Popen(script_text, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
-                                        sigpout, sigperr = runsigP.communicate()
-                                        for line in sigperr.decode("utf-8").split('\n'):
-                                                if line.rstrip('\n') == '# No sequences predicted with a signal peptide':
-                                                        with open(os.path.join(os.getcwd(), outdir, basename + '_signalp.results'), 'w') as null_out:
-                                                                null_out.write(line)
-                                                        break
-                                                elif not 'is an unknown amino amino acid' in line and not line == '':
-                                                        print(line + '<')
-                                                        print('--')
-                                                        raise Exception('SignalP error text below\n' + str(sigperr.decode("utf-8")))
-        
-                print('Masking signal peptides from sequences...')
-                if not os.path.isfile(os.path.join(os.getcwd(), outdir, basename + '_signalp.results')):
-                        # Run signalP multi-threaded if enabled
-                        if int(args['threads']) > 1:
-                                processing_threads = []
-                                # Begin the loop
-                                for i in range(int(args['threads'])):
-                                        build = threading.Thread(target=signalp_threading, args=(args, outdir, basename, i+1))
-                                        processing_threads.append(build)
-                                        build.start()
-                                        print('........Initiated thread num ' + str(i+1) + ' for signalP operations...')
-                                # Wait for all threads to end.
-                                for process_thread in processing_threads:
-                                        process_thread.join()
-                                print('........SignalP completed...')
-                        # Run signalP signal-thread
+        def run_signalp(signalpdir, cygwindir, outputDir, outputFileName, organism, fileNames):
+                # Set up
+                import threading, os
+                # Define functions integral to this one
+                def signalp_thread(signalpdir, cygwindir, outputDir, organism, fastaFile, resultNames):
+                        import os, subprocess, platform
+                        # Get the full fasta file location
+                        fastaFile = os.path.abspath(fastaFile)
+                        # Format signalP script text
+                        sigpResultFile = os.path.join(outputDir, thread_file_name_gen('tmp_sigpResults_' + os.path.basename(fastaFile), ''))
+                        scriptText = '"' + os.path.join(signalpdir, 'signalp') + '" -t ' + organism + ' -f short -n "' + sigpResultFile + '" "' + fastaFile + '"'
+                        # Generate a script for use with cygwin (if on Windows)
+                        if platform.system() == 'Windows':
+                                sigpScriptFile = os.path.join(outputDir, thread_file_name_gen('tmp_sigpScript_' + os.path.basename(fastaFile), '.sh'))
+                                with open(sigpScriptFile, 'w') as fileOut:
+                                        fileOut.write(scriptText.replace('\\', '/'))
+                        # Run signalP depending on operating system
+                        if platform.system() == 'Windows':
+                                cmd = os.path.join(cygwindir, 'bash') + ' -l -c "' + sigpScriptFile.replace('\\', '/') + '"'
+                                runsigP = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
+                                sigpout, sigperr = runsigP.communicate()
+                                os.remove(sigpScriptFile)       # Clean up temporary file
                         else:
-                                signalp_1thread(args, outdir, basename)
-                # Join signalP output files if run multi-threaded
-                if int(args['threads']) > 1:
-                        with open(os.path.join(os.getcwd(), outdir, basename + '_signalp.results'), 'w') as outFile:
-                                for i in range(int(args['threads'])):
-                                        sigp_chunk_file = open(os.path.join(os.getcwd(), outdir, basename + '_signalp_chunk' + str(i+1) + '.results'), 'r').read()
-                                        outFile.write(sigp_chunk_file)
-                # Parse signalP output
-                sigpred = {}
-                with open(os.path.join(os.getcwd(), outdir, basename + '_signalp.results'), 'r') as sigp_results:
-                        for line in sigp_results:
+                                runsigP = subprocess.Popen(scriptText, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
+                                sigpout, sigperr = runsigP.communicate()
+                        # Process output
+                        okayLines = ['is an unknown amino amino acid', 'perl: warning:', 'LC_ALL =', 'LANG =', 'are supported and installed on your system']
+                        for line in sigperr.decode("utf-8").split('\n'):
+                                # If sigperr indicates null result, create an output file we can skip later
+                                if line.rstrip('\n') == '# No sequences predicted with a signal peptide':
+                                        with open(sigpResultFile, 'w') as fileOut:
+                                                fileOut.write(line)
+                                        break
+                                # Check if this line has something present within okayLines
+                                okay = 'n'
+                                for entry in okayLines:
+                                        if entry in line or line == '':
+                                                okay = 'y'
+                                                break
+                                if okay == 'y':
+                                        continue
+                                # If nothing matches the okayLines list, we have a potentially true error
+                                else:
+                                        raise Exception('SignalP error occurred when processing file name ' + fastaFile + '. Error text below\n' + sigperr.decode("utf-8"))
+                        # Store the result file name in a mutable object so we can retrieve it after joining
+                        resultNames.append(sigpResultFile)
+                
+                def thread_file_name_gen(prefix, threadNum):
+                        ongoingCount = 0
+                        while True:
+                                if not os.path.isfile(prefix + threadNum):
+                                        return prefix + threadNum
+                                elif os.path.isfile(prefix + threadNum + '.' + str(ongoingCount)):
+                                        ongoingCount += 1
+                                else:
+                                        return prefix + threadNum + '.' + str(ongoingCount)
+                # Main function
+                # Run signalP on each of the input files
+                resultNames = []
+                processing_threads = []
+                for name in fileNames:
+                        build = threading.Thread(target=signalp_thread, args=(signalpdir, cygwindir, outputDir, organism, name, resultNames))
+                        processing_threads.append(build)
+                        build.start()
+                # Wait for all threads to end
+                for process_thread in processing_threads:
+                        process_thread.join()
+                # Join and parse signalP results files
+                combinedFile = ''
+                for name in resultNames:
+                        with open(name, 'r') as fileIn:
+                                for line in fileIn:
+                                        combinedFile += line
+                # Clean up temporary files
+                for name in resultNames:
+                        os.remove(name)
+                # Write main output file
+                with open(outputFileName, 'w') as fileOut:
+                        fileOut.write(combinedFile)
+
+        def parse_sigp_results(sigpFile):
+                sigPredictions = {}
+                with open(sigpFile, 'r') as fileIn:
+                        for line in fileIn:
                                 if line.startswith('#'):
                                         continue
                                 sl = line.split('\t')
-                                sigpred[sl[0]] = [int(sl[3]), int(sl[4])]                        
+                                sigPredictions[sl[0]] = [int(sl[3]), int(sl[4])]
+                # Return signalP prediction dictionary
+                return sigPredictions
+        
+        def mask_fasta_by_sigp(sigpDict, fastaFile, outputFileName):
+                # Set up
+                from Bio import SeqIO
                 # Mask signal peptides
-                sigp_out = []
-                records = SeqIO.parse(open(os.path.join(os.getcwd(), outdir, basename + '_domCut.fasta'), 'rU'), 'fasta')
-                with open(os.path.join(os.getcwd(), outdir, basename + '_signalp.fasta'), 'w') as sigp_outfile:
+                records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
+                with open(outputFileName, 'w') as fileOut:
                         for record in records:
                                 seqid = record.id
                                 seq = str(record.seq)
-                                if seqid in sigpred:
-                                        sig_location = sigpred[seqid]
-                                        seq = seq[0:sig_location[0]-1] + ('x' * (sig_location[1] + 1 - sig_location[0])) + seq[sig_location[1]:]
-                                        sigp_outfile.write('>' + seqid + '\n' + seq + '\n')
+                                if seqid in sigpDict:
+                                        coord = sigpDict[seqid]
+                                        seq = seq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + seq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
+                                        fileOut.write('>' + seqid + '\n' + seq + '\n')
                                 else:
-                                        sigp_outfile.write('>' + seqid + '\n' + seq + '\n')
-        
+                                        fileOut.write('>' + seqid + '\n' + seq + '\n')
+
         ### SEG AND COILS (Loads in signalP masked file)
         def runsegandcoils(args, outdir, basename):
                 import os, subprocess, platform, io
