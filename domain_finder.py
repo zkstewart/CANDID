@@ -245,6 +245,65 @@ def config_file_generation(args):
                         # Write everything else to file
                         fileOut.write(key + ' = ' + str(value) + '\n')
 
+## Dictionary merging for seg/coils
+def coord_merge(coordList, coord):
+        # Merge the new coord into the current coordList
+        merged = 'n'
+        if coord != None:
+                for i in range(len(coordList)):
+                        pair1 = coordList[i]
+                        pair2 = coord
+                        # Detect overlap
+                        if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                # Merge coords
+                                start = min([pair1[0], pair2[0]])
+                                end = max([pair1[1], pair2[1]])
+                                coordList[i] = [start, end]
+                                merged = 'y'
+                                break
+        # If we didn't merge this coord into an existing one, add it into the list
+        if merged == 'n' and coord != None:
+                coordList.append(coord)
+        # If we did merge it, re-process the coordList to merge anything else that needs it
+        else:
+                for x in range(len(coordList)-1,-1,-1):
+                        if x != 0:
+                                pair1 = coordList[x]
+                                pair2 = coordList[x-1]
+                                # Detect overlap
+                                if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                        # Merge coords
+                                        start = min([pair1[0], pair2[0]])
+                                        end = max([pair1[1], pair2[1]])
+                                        coordList[x-1] = [start, end]
+                                        # Cull entry
+                                        del coordList[x]
+        return coordList
+
+def coord_dict_merge(dict1, dict2):
+        # Quick check to make sure there's unlikely to be any errors
+        assert len(dict1) == len(dict2)
+        # Merge dictionary coordinates together
+        for key, value in dict1.items():
+                value2 = dict2[key]
+                for entry in value2:
+                        value = coord_merge(value, entry)
+                dict1[key] = value
+        return dict1
+
+## MMseqs2 related
+def index_exists(fileNamePrefix, directory):
+        import re
+        # Make regex
+        indexRegex = re.compile(fileNamePrefix + '.sk' + r'\d')
+        index = False
+        for file in os.listdir(directory):
+                hit = indexRegex.findall(file)
+                if hit != []:
+                        index = True
+                        break
+        return index
+
 ## General purpose arguments
 def file_name_gen(prefix, suffix):
         ongoingCount = 2
@@ -369,7 +428,7 @@ p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = 
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED.")
 # Opts 9: Alternative program operations
 p.add_argument("-generate_config", dest="generate_config", action = "store_true", default = False,
-                  help="Instead of running this program, instead generate a .config file within the specified outdir; this will be a combination of default parameters plus any you specify here on the command-line.")
+                  help="Instead of running this program, just generate a .config file within the specified outdir; this will be a combination of default parameters plus any you specify here on the command-line.")
 
 args = p.parse_args()
 
@@ -424,45 +483,54 @@ if not args.benchmark:
 
 if not os.path.isfile(outputBase + '_domCut.fasta'):
         hmmerCoordDict = domfind.hmmer_coord_parse(outputBase + '_hmmerParsed.results')
-        domfind.hmmer_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
+        domfind.coord_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
 
 ### RUN SIGNALP
 if not os.path.isfile(outputBase + '_signalp.fasta'):
         if not os.path.isfile(outputBase + '_signalp.results'):
                 domfind.run_signalp(args.signalpdir, args.cygwindir, args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)
         sigpPredDict = domfind.parse_sigp_results(outputBase + '_signalp.results')
-        domfind.mask_fasta_by_sigp(sigpPredDict, outputBase + '_domCut.fasta', outputBase + '_signalp.fasta')
+        domfind.coord_cutter(outputBase + '_domCut.fasta', sigpPredDict, outputBase + '_signalp.fasta')
         sigpPredDict = None
 
-recodedTilHere
-
 ### RUN SEG AND COILS
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_segcoils.fasta')):
-        domfind.runsegandcoils(args, outputDir, fasta_base)
+if not os.path.isfile(outputBase + '_segcoils.fasta'):
+        if not os.path.isfile(outputBase + '_seg.fasta'):
+                domfind.run_seg(args.segdir, args.outdir, chunkFiles, outputBase + '_seg.fasta')
+        segPredDict = domfind.parse_seg_results(outputBase + '_seg.fasta')
+        if not os.path.isfile(outputBase + '_coils.results'):
+                domfind.run_coils(args.coilsdir, args.python2dir, chunkFiles, outputBase + '_coils.results')
+        coilsPredDict = domfind.parse_coils_results(outputBase + '_coils.results', chunkFiles)
+        segCoilsDict = coord_dict_merge(segPredDict, coilsPredDict)
+        domfind.coord_cutter(outputBase + '_signalp.fasta', segCoilsDict, outputBase + '_segcoils.fasta')
 
 # BENCHMARK
-if args['benchmark'] == 'y':
-        benchparse.reject_novelty(args, outputDir, fasta_base)
+#if args['benchmark'] == 'y':
+#        benchparse.reject_novelty(args, outputDir, fasta_base)
 
 ### FINAL PREP CLEAN-UP
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_clean.fasta')):
-        domfind.cleanseqs(args, outputDir, fasta_base)
+if not os.path.isfile(outputBase + '_clean.fasta'):
+        domfind.clean_seqs(outputBase + '_segcoils.fasta', args.cleanAA, outputBase + '_clean.fasta')
 
 #### MMSEQS2 OPERATIONS
 
 ### MAKE MMSEQS2 DB
-if not os.path.isdir(os.path.join(os.getcwd(), outputDir, 'mms2tmp')):
-        os.mkdir(os.path.join(os.getcwd(), outputDir, 'mms2tmp'))
-#else:
-#        shutil.rmtree(os.path.join(os.getcwd(), outputDir, 'mms2tmp'), ignore_errors=False, onerror=None)       # MMseqs2 has an annoying habit of using files in the temporary folder incorrectly if you change; the only way to prevent errors is to make sure the temporary folder is empty.
-#        os.mkdir(os.path.join(os.getcwd(), outputDir, 'mms2tmp'))
-        
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2DB')) and not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2DB.index')):
-        domfind.makemms2db(args, outputDir, fasta_base)  
+tmpdir = os.path.join(args.outdir, 'mms2tmp')
+if not os.path.isdir(tmpdir):
+        os.mkdir(tmpdir)        # If MMseqs2 still has errors with resuming runs I can add an else condition to delete and recreate the tmpdir; I believe they fixed this error at some point, however
+
+if not os.path.isfile(outputBase + '_clean.fasta_queryDB'):
+        domfind.makemms2db(args.mmseqs2dir, outputBase + '_clean.fasta', None, 'query')
+
+if index_exists(fastaBase + '_clean.fasta_queryDB', args.outdir) == False:      # This function can cause problems when running with Cygwin, hopefully they fix this error in later versions, otherwise I'll need to add a platform check and skip indexing for Windows only; this isn't ideal for resuming runs, but it's better than nothing
+        domfind.indexmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, args.threads, 'query')
 
 ### RUN MMSEQS2
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_mmseqs2SEARCH.m8')):
-        domfind.runmms2(args, outputDir, fasta_base)     
+if not os.path.isfile(outputBase + '_mmseqs2SEARCH'):
+        params = [args.mms2eval, args.threads, 4, 7, 0]
+        domfind.runmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', params)
+if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
+        domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', args.threads)
 
 ### PARSE MMSEQS2
 if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclustered_domains.fasta')):

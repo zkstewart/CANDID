@@ -1,3 +1,65 @@
+# Class assistants
+def consecutive_character_coords(inputString, character, base, outType):
+        # Parse the index positions of the specified character to derive start-stop coordinates of character stretches
+        charIndices = []
+        for i in range(len(inputString)):
+                if inputString[i] == character:
+                        if base == 0:
+                                charIndices.append(i)
+                        elif base == 1:
+                                charIndices.append(i+1)
+                        else:
+                                print('Base value is wrong. Need to fix.')
+                                quit()
+        charCoords = []
+        for i in range(len(charIndices)):
+                if i == 0:
+                        charStart = charIndices[i]
+                        charStretch = 0         # This acts 0-based, a charStretch of 0 means it's 1 character long
+                elif i != len(charIndices) - 1:
+                        if charIndices[i] == charIndices[i-1] + 1:
+                                charStretch += 1
+                        else:
+                                # Save
+                                if outType == 'coords':
+                                        charCoords.append(str(charStart) + '-' + str(charStart + charStretch)) # Note that this does not act like a Python range(), it is everything up to AND including the final index
+                                elif outType == 'pairs':
+                                        charCoords.append([charStart, charStart + charStretch])
+                                # Other stuff
+                                charStretch = 0
+                                charStart = charIndices[i]
+                else:
+                        if charIndices[i] == charIndices[i-1] + 1:
+                                charStretch += 1
+                        # Save
+                        if outType == 'coords':
+                                charCoords.append(str(charStart) + '-' + str(charStart + charStretch))
+                        elif outType == 'pairs':
+                                charCoords.append([charStart, charStart + charStretch])
+                        # Other stuff
+                        charStretch = 0
+                        charStart = charIndices[i]
+                        if charIndices[i] != charIndices[i-1] + 1:
+                                charStretch = 0
+                                charStart = charIndices[i]
+                                # Save
+                                if outType == 'coords':
+                                        charCoords.append(str(charStart) + '-' + str(charStart + charStretch))
+                                elif outType == 'pairs':
+                                        charCoords.append([charStart, charStart + charStretch])
+        return charCoords
+
+def thread_file_name_gen(prefix, threadNum):
+        import os
+        ongoingCount = 0
+        while True:
+                if not os.path.isfile(prefix + threadNum):
+                        return prefix + threadNum
+                elif os.path.isfile(prefix + threadNum + '.' + str(ongoingCount)):
+                        ongoingCount += 1
+                else:
+                        return prefix + threadNum + '.' + str(ongoingCount)
+
 class domfind:
         ### CD-HIT
         def run_cdhit(cdhitDir, outputDir, inputFasta, outputFasta, params):
@@ -172,7 +234,7 @@ class domfind:
                                 hmmerDict[key] = coords
                 return hmmerDict
         
-        def hmmer_cutter(fastaFile, hmmerCoordDict, outputFileName):
+        def coord_cutter(fastaFile, coordDict, outputFileName):
                 # Set up
                 from Bio import SeqIO
                 # Remove domain regions from fasta
@@ -180,13 +242,17 @@ class domfind:
                 with open(outputFileName, 'w') as outFile:
                         for record in records:
                                 # Processing steps
-                                seqName = record.id
-                                if seqName not in hmmerCoordDict:
+                                seqName = record.description
+                                if seqName not in coordDict:
                                         outFile.write('>' + seqName + '\n' + str(record.seq) + '\n')
                                 else:
                                         # Mask the domain regions
                                         currSeq = str(record.seq)
-                                        for coord in hmmerCoordDict[seqName]:
+                                        coords = coordDict[seqName]
+                                        if coords != []:                        # Empty lists are fine, they won't trigger our coord loop so the sequence will be unaltered
+                                                if type(coords[0]) == int:      # If this is true, our structure looks something like [1,2]; this function expects a list of lists e.g., [[1,2]]
+                                                        coords = [coords]       # By doing this, we can make this function compatible with other coord dict structures which only ever have 1 entry per sequence
+                                        for coord in coords:
                                                 currSeq = currSeq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + currSeq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
                                         outFile.write('>' + seqName + '\n' + currSeq + '\n')
 
@@ -237,16 +303,6 @@ class domfind:
                                         raise Exception('SignalP error occurred when processing file name ' + fastaFile + '. Error text below\n' + sigperr.decode("utf-8"))
                         # Store the result file name in a mutable object so we can retrieve it after joining
                         resultNames.append(sigpResultFile)
-                
-                def thread_file_name_gen(prefix, threadNum):
-                        ongoingCount = 0
-                        while True:
-                                if not os.path.isfile(prefix + threadNum):
-                                        return prefix + threadNum
-                                elif os.path.isfile(prefix + threadNum + '.' + str(ongoingCount)):
-                                        ongoingCount += 1
-                                else:
-                                        return prefix + threadNum + '.' + str(ongoingCount)
                 # Main function
                 # Run signalP on each of the input files
                 resultNames = []
@@ -263,6 +319,8 @@ class domfind:
                 for name in resultNames:
                         with open(name, 'r') as fileIn:
                                 for line in fileIn:
+                                        if not line.endswith('\n'):
+                                                line += '\n'
                                         combinedFile += line
                 # Clean up temporary files
                 for name in resultNames:
@@ -281,191 +339,225 @@ class domfind:
                                 sigPredictions[sl[0]] = [int(sl[3]), int(sl[4])]
                 # Return signalP prediction dictionary
                 return sigPredictions
-        
-        def mask_fasta_by_sigp(sigpDict, fastaFile, outputFileName):
-                # Set up
-                from Bio import SeqIO
-                # Mask signal peptides
-                records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
-                with open(outputFileName, 'w') as fileOut:
-                        for record in records:
-                                seqid = record.id
-                                seq = str(record.seq)
-                                if seqid in sigpDict:
-                                        coord = sigpDict[seqid]
-                                        seq = seq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + seq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
-                                        fileOut.write('>' + seqid + '\n' + seq + '\n')
-                                else:
-                                        fileOut.write('>' + seqid + '\n' + seq + '\n')
 
         ### SEG AND COILS (Loads in signalP masked file)
-        def runsegandcoils(args, outdir, basename):
-                import os, subprocess, platform, io
-                from Bio import SeqIO
-                ### RUN SEG
-                print('Masking LCRs from sequences...')
-                segout = os.path.join(os.getcwd(), outdir, basename + '_seg.fasta')
-                if not os.path.isfile(segout):
-                        cmd = os.path.join(args['segdir'], 'seg') + ' "' + os.path.join(os.getcwd(), outdir, basename + '_signalp.fasta') + '" -x > ' + '"' + segout + '"'
-                        run_seg = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
-                        run_seg.wait()
-                        segErr = run_seg.stderr.read().decode("utf-8")
-                        if segErr != '':
-                                raise Exception('SEG error text below\n' + segErr)
-                ### RUN COILS
-                print('Masking coils from sequences...')
-                # Format cmd
-                coils_outname = os.path.join(os.getcwd(), outdir, basename + '_segcoils.fasta')
-                cmd = '"' + os.path.join(args['python2dir'], 'python') + '" "' + os.path.join(args['coilsdir'], 'psCoils.py') + '" -f "' + segout + '"'
-                #run_coils = subprocess.check_output(cmd, shell = True, stderr = subprocess.PIPE)
-                run_coils = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
-                coilsout, coilserr = run_coils.communicate()
-                if coilserr.decode("utf-8") != '':
-                        raise Exception('COILS error text below\n' + coilserr.decode("utf-8"))         
-                # Parse coils results
-                output = coilsout.decode("utf-8").split(' Pos A Hep Score   Prob        Gcc         Gg        Pred (Loop=L Coiledcoil=C)')
-                parsed_coils = {}   # Need to use a dictionary since coils doesn't appear to process sequences in the order that they occur in a fasta file?
-                for pred in output:
-                        if pred == '': continue
-                        tempcoil = ''
-                        tempseq = ''
-                        for row in pred.replace('\r', '').split('\n'):
-                                if row.endswith('L') or row.endswith('C'):
-                                        temprow = row.split()
-                                        tempseq += temprow[1]
-                                        tempcoil += temprow[-1]
-                        parsed_coils[tempseq] = tempcoil
-                # Mask coiled coil domains
-                coils_seqids = []
-                coils_seqs = []
-                records = SeqIO.parse(open(segout, 'rU'), 'fasta')
-                for record in records:
-                        seqid = record.id
-                        seq = str(record.seq)
-                        coilpred = parsed_coils[seq]
-                        for i in range(len(coilpred)):
-                                if coilpred[i] == 'C':
-                                        seq = seq[:i] + 'x' + seq[i+1:]
-                        coils_seqids.append('>' + seqid)
-                        coils_seqs.append(seq)
-                # Fix up capital X's introduced by seg
-                coils_output = []
-                for i in range(len(coils_seqs)):
-                        coils_seqs[i] = coils_seqs[i].replace('X', 'x')
-                        coils_output.append(coils_seqids[i] + '\n' + coils_seqs[i])
-                # Create combined seg + COILS output file
-                outfile = open(coils_outname, 'w')
-                outfile.write('\n'.join(coils_output))
-                outfile.close()
+        def run_seg(segdir, outputDir, fileNames, outputFileName):
+                import threading, os
+                # Define functions integral to this one
+                def seg_thread(segdir, fastaFile, resultNames):
+                        # Set up
+                        import subprocess
+                        # Get the full fasta file location & derive our output file name
+                        fastaFile = os.path.abspath(fastaFile)
+                        segResultFile = os.path.join(outputDir, thread_file_name_gen('tmp_segResults_' + os.path.basename(fastaFile), ''))
+                        # Format seg command and run
+                        cmd = os.path.join(segdir, 'seg') + ' "' + fastaFile + '" -x > ' + '"' + segResultFile + '"'
+                        #print(cmd)
+                        runseg = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
+                        segout, segerr = runseg.communicate()
+                        # Process output
+                        if segerr.decode("utf-8") != '':
+                                raise Exception('SEG error text below\n' + segerr.decode("utf-8"))
+                        # Store the result file name in a mutable object so we can retrieve it after joining
+                        resultNames.append(segResultFile)
+                # Main function
+                # Run seg on each of the input files
+                processing_threads = []
+                resultNames = []        # Use a mutable list here so we can retrieve the file names in the absence of being able to return these through the threaded function
+                for name in fileNames:
+                        build = threading.Thread(target=seg_thread, args=(segdir, name, resultNames))
+                        processing_threads.append(build)
+                        build.start()
+                # Wait for all threads to end
+                for process_thread in processing_threads:
+                        process_thread.join()
+                # Join seg results files
+                combinedFile = ''
+                for name in resultNames:
+                        with open(name, 'r') as fileIn:
+                                for line in fileIn:
+                                        if line == '\r\n' or line == '\n':
+                                                continue
+                                        if not line.endswith('\n'):
+                                                line += '\n'
+                                        combinedFile += line
+                # Clean up temporary files
+                for name in resultNames:
+                        os.remove(name)
+                # Write main output file
+                with open(outputFileName, 'w') as fileOut:
+                        fileOut.write(combinedFile)
 
-        def cleanseqs(args, outdir, basename):
-                import os
+        def parse_seg_results(segFile):
+                # Set up
                 from Bio import SeqIO
-                # Load in sequence file
-                preclean_file = os.path.join(os.getcwd(), outdir, basename + '_segcoils.fasta')
-                records = SeqIO.parse(open(preclean_file, 'rU'), 'fasta')
-                # Create output file
-                outname = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
-                outfile = open(outname, 'w')
-                # Begin cleaning file
-                print('Cleaning up fasta file before running PSI-BLAST...')
-                outputText = []
-                ongoingCount = 0
-                for record in records:
-                        # Processing steps
-                        seqid = record.id
+                # Parse seg results files
+                segPredictions = {}
+                segRecords = SeqIO.parse(open(segFile, 'r'), 'fasta')
+                for record in segRecords:
+                        seqid = record.description
                         seq = str(record.seq)
-                        aaSeq = seq.replace('x', '')
-                        if len(aaSeq) >= int(args['cleanAA']):
-                                outputText.append('>' + seqid + '\n' + seq)
-                        ongoingCount += 1
-                        # Make backup files to reduce memory usage
-                        if ongoingCount%100000 == 0 and os.path.isfile(outname) == False:
-                                output = open(outname, 'w')
-                                output.write('\n'.join(outputText))
-                                output.close()
-                                print('Backup made after ' + str(ongoingCount) + ' sequences cleaned.')
-                                outputText = ''
-                        elif ongoingCount%100000 == 0 and os.path.isfile(outname) == True:
-                                output = open(outname, 'a')
-                                output.write('\n'.join(outputText))
-                                output.close()
-                                print('Backup made after ' + str(ongoingCount) + ' sequences cleaned...')
-                                outputText = ''
+                        xCoords = consecutive_character_coords(seq, 'x', 1, 'pairs')
+                        segPredictions[seqid] = xCoords
+                # Return seg prediction dictionary
+                return segPredictions
 
-                # Dump the last few results after the script has finished, or create the output if there were less than 10,000 sequences
-                if os.path.isfile(outname) == False:
-                        output = open(outname, 'w')
-                        output.write('\n'.join(outputText))
-                        output.close()
-                        print('Final save made after ' + str(ongoingCount) + ' sequences cleaned...')
-                elif os.path.isfile(outname) == True:
-                        output = open(outname, 'a')
-                        output.write('\n'.join(outputText))
-                        output.close()
-                        print('Final save made after ' + str(ongoingCount) + ' sequences cleaned...')
+        def run_coils(coilsdir, py2dir, fileNames, outputFileName):
+                # Set up
+                import threading
+                # Define functions integral to this one
+                def coils_thread(coilsdir, py2dir, fastaFile, coilsResults):
+                        import os, subprocess
+                        # Get the full fasta file location & derive our output file name
+                        fastaFile = os.path.abspath(fastaFile)
+                        # Format coils command & run
+                        cmd = '"' + os.path.join(py2dir, 'python') + '" "' + os.path.join(coilsdir, 'psCoils.py') + '" -f "' + fastaFile + '"'
+                        runcoils = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
+                        coilsout, coilserr = runcoils.communicate()
+                        # Process output
+                        if coilserr.decode("utf-8") != '':
+                                raise Exception('Coils error text below\n' + coilserr.decode("utf-8"))
+                        # Store the result file name in a mutable object so we can retrieve it after joining
+                        coilsResults.append(coilsout.decode("utf-8"))
+                # Main function
+                # Run coils on each of the input files
+                processing_threads = []
+                coilsResults = []        # Use a mutable list here so we can retrieve the file names in the absence of being able to return these through the threaded function
+                for name in fileNames:
+                        build = threading.Thread(target=coils_thread, args=(coilsdir, py2dir, name, coilsResults))
+                        processing_threads.append(build)
+                        build.start()
+                # Wait for all threads to end
+                for process_thread in processing_threads:
+                        process_thread.join()
+                # Write results to file
+                with open(outputFileName, 'w') as fileOut:
+                        for result in coilsResults:
+                                result = result.replace('\r', '')
+                                for line in result.split('\n'):
+                                        if line == '':
+                                                continue
+                                        fileOut.write(line + '\n')
+
+        def parse_coils_results(coilsFile, fastaFiles):
+                # Set up
+                from Bio import SeqIO
+                coilsPredictions = {}
+                # Main function
+                coilsResults = open(coilsFile, 'r').read()
+                # Split result by headers - each header corresponds to a sequence's result
+                result = coilsResults.split(' Pos A Hep Score   Prob    Gcc     Gg    Pred (Loop=L Coiledcoil=C)')
+                while '' in result:     # There should only be one entry corresponding to this at the very start of the result list
+                        del result[result.index('')]
+                for i in range(len(result)):
+                        # Build a sequence consisting of L's (loops) and C's (coils) in addition to the original sequence
+                        coilSeq = ''
+                        protSeq = ''
+                        for row in result[i].split('\n'):
+                                if row == '':
+                                        continue
+                                sr = row.split()
+                                coilSeq += sr[7]
+                                protSeq += sr[1]
+                        # Extract coil coordinates
+                        cCoords = consecutive_character_coords(coilSeq, 'C', 1, 'pairs')
+                        # Add to our coilsPredictions dictionary
+                        coilsPredictions[protSeq] = cCoords     # psCoils doesn't provide ordered results, so we need to match protein sequences to their coil results
+                # Associate coils results to sequence IDs
+                coilsIDs = {}
+                for name in fastaFiles:
+                        records = SeqIO.parse(open(name, 'r'), 'fasta')
+                        for record in records:
+                                coilsIDs[record.description] = coilsPredictions[str(record.seq)]
+                # Return coils prediction dictionary
+                return coilsIDs
+        
+        def clean_seqs(fastaFile, length, outputFileName):
+                # Set up
+                from Bio import SeqIO
+                # Load fasta file
+                records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
+                # Perform function
+                with open(outputFileName, 'w') as fileOut:
+                        for record in records:
+                                sequence = str(record.seq)
+                                cleanSeq = sequence.replace('x', '')
+                                if len(cleanSeq) < int(length):
+                                        continue
+                                # Output
+                                fileOut.write('>' + record.description + '\n' + sequence + '\n')
 
         ######## FUNCTIONS RELATING TO MMseqs2
-        def makemms2db(args, outdir, basename):
-                import os, subprocess, platform
+        def makemms2db(mmseqs2dir, query, target, which):
+                import os, subprocess
                 # Format command
-                fasta = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
-                db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
-                tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
-                if platform.system() == 'Windows':
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' createdb "' + fasta + '" "' + db + '"'
-                else:
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' createdb "' + fasta + '" "' + db + '"'
-                print('Making MMseqs2 db...')
-                run_makedb = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
-                makedbout, makedberr = run_makedb.communicate()
-                if makedberr.decode("utf-8") != '':
-                        raise Exception('Make MMseqs2 db error text below\n' + makedberr.decode("utf-8"))
-                # Run further indexing
-                if platform.system() == 'Windows':
-                        #cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' createindex "' + db + '" "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' createindex "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
-                else:
-                        #cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' createindex "' + db + '" "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' createindex "' + db + '" "' + tmpdir + '" --threads ' + str(args['threads'])
-                print('Indexing MMseqs2 db...')
-                run_index = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
-                indexout, indexerr = run_index.communicate()
-                if indexerr.decode("utf-8") != '':
-                        raise Exception('Indexing MMseqs2 db error text below\n' + indexerr.decode("utf-8"))
+                dbname1 = query + '_queryDB'
+                cmd1 = os.path.join(mmseqs2dir, 'mmseqs') + ' createdb "' + query + '" "' + dbname1 + '"'
+                if target != None:
+                        dbname2 = target + '_targetDB'
+                        cmd2 = os.path.join(mmseqs2dir, 'mmseqs') + ' createdb "' + target + '" "' + dbname2 + '"'
+                # Query DB generation
+                if which == 'query' or which == 'both':
+                        run_makedb = subprocess.Popen(cmd1, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+                        makedbout, makedberr = run_makedb.communicate()
+                        if makedberr.decode("utf-8") != '':
+                                raise Exception('Make MMseqs2 query db error text below\n' + makedberr.decode("utf-8"))
+                # Run target DB generation if target != query
+                if query != target and target != None:  # This lets us use this function when we know we don't have a target; we can just specify None as a more intuitive way of producing the expected behaviour of only working with a single query
+                        if which == 'target' or which == 'both':
+                                run_makedb = subprocess.Popen(cmd2, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+                                makedbout, makedberr = run_makedb.communicate()
+                                if makedberr.decode("utf-8") != '':
+                                        raise Exception('Make MMseqs2 target db error text below\n' + makedberr.decode("utf-8"))
+        
+        def indexmms2(mmseqs2dir, query, target, tmpdir, threads, which):
+                import os, subprocess
+                # Format command
+                dbname1 = query + '_queryDB'
+                cmd1 = os.path.join(mmseqs2dir, 'mmseqs') + ' createindex "' + dbname1 + '" "' + tmpdir + '" --threads ' + str(threads)
+                if target != None:
+                        dbname2 = target + '_targetDB'
+                        cmd2 = os.path.join(mmseqs2dir, 'mmseqs') + ' createindex "' + dbname2 + '" "' + tmpdir + '" --threads ' + str(threads)
+                # Run query index
+                if which == 'query' or which == 'both':
+                        run_index = subprocess.Popen(cmd1, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+                        indexout, indexerr = run_index.communicate()
+                        if indexerr.decode("utf-8") != '':
+                                raise Exception('Indexing MMseqs2 query db error text below\n' + indexerr.decode("utf-8"))
+                # Run target DB indexing if target != query
+                if query != target and target != None:
+                        if which == 'target' or which == 'both':
+                                run_index = subprocess.Popen(cmd2, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
+                                indexout, indexerr = run_index.communicate()
+                                if indexerr.decode("utf-8") != '':
+                                        raise Exception('Indexing MMseqs2 target db error text below\n' + indexerr.decode("utf-8"))
 
-        def runmms2(args, outdir, basename):
-                import os, subprocess, platform
+        def runmms2(mmseqs2dir, query, target, tmpdir, searchName, params):
+                import os, subprocess
                 # Format command
-                if platform.system() == 'Windows':
-                        db = os.path.join(outdir, basename + '_mmseqs2DB')          # MMS2 behaves a bit weirdly with Cygwin at this step. In order to get it to work, we need to use . to represent the cwd.
-                        tmpdir = os.path.join(outdir, 'mms2tmp')
-                        outprefix = os.path.join(outdir, basename + '_mmseqs2SEARCH')
-                        evalue = args.mms2eval
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' search .\\' + db + ' .\\' + db + ' .\\' + outprefix + ' .\\' + tmpdir + ' --threads ' + str(args['threads']) + ' --num-iterations 4 -s 8'  # I considered adding the ability to change these values as an option, but MMSeqs2 is so fast that I don't think it's worth trading off accuracy for some speed improvement since it runs counter to the intent of this program to find novel domains not previously identified.
+                dbname1 = query + '_queryDB'
+                if query != target and target != None:
+                        dbname2 = target + '_targetDB'
                 else:
-                        db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
-                        tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
-                        outprefix = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2SEARCH')
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' search "' + db + '" "' + db + '" "' + outprefix + '" "' + tmpdir + '" --threads ' + str(args['threads']) + ' --num-iterations 4 -s 8'
-                print('Running MMseqs2 profile iteration...')
+                        dbname2 = query + '_queryDB'
+                cmd = os.path.join(mmseqs2dir, 'mmseqs') + ' search "' + dbname1 + '" "' + dbname2 + '" "' + searchName + '" "' + tmpdir + '" -e {} --threads {} --num-iterations {} -s {} --alt-ali {}'.format(*params)
+                print(cmd)
+                # Run query
                 run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
                 mms2out, mms2err = run_mms2.communicate()
                 if mms2err.decode("utf-8") != '':
-                        raise Exception('MMseqs2 profile iteration error text below\n' + mms2err.decode("utf-8"))
-                # Create tab-delim BLAST-like output
-                if platform.system() == 'Windows':
-                        querydb = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
-                        searchdb = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2SEARCH')
-                        tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
-                        #cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' convertalis ".\\' + db + '" ".\\' + db + '" ".\\' + outprefix + '.m8" ".\\' + tmpdir + '" --threads ' + str(args['threads'])
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs.exe') + ' convertalis "' + querydb + '" "' + querydb + '" "' + searchdb + '" "' + searchdb + '.m8" "' + tmpdir + '" --threads ' + str(args['threads'])
+                        raise Exception('MMseqs2 search error text below\n' + mms2err.decode("utf-8"))
+        
+        def mms2tab(mmseqs2dir, query, target, tmpdir, searchName, threads):
+                import os, subprocess
+                # Get file details
+                dbname1 = query + '_queryDB'
+                if query != target and target != None:
+                        dbname2 = target + '_targetDB'
                 else:
-                        fasta = os.path.join(os.getcwd(), outdir, basename + '_clean.fasta')
-                        db = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2DB')
-                        tmpdir = os.path.join(os.getcwd(), outdir, 'mms2tmp')
-                        cmd = os.path.join(args['mmseqs2dir'], 'mmseqs') + ' convertalis "' + querydb + '" "' + querydb + '" "' + searchdb + '" "' + searchdb + '.m8" "' + tmpdir + '" --threads ' + str(args['threads'])
-                print('Generating MMseqs2 tabular output...')
+                        dbname2 = query + '_queryDB'
+                # Create tab-delim BLAST-like output
+                cmd = os.path.join(mmseqs2dir, 'mmseqs') + ' convertalis "' + dbname1 + '" "' + dbname2 + '" "' + searchName + '" "' + searchName + '.m8" "' + tmpdir + '" --threads ' + str(threads)
                 run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
                 mms2out, mms2err = run_mms2.communicate()
                 if mms2err.decode("utf-8") != '':
@@ -664,17 +756,15 @@ class domfind:
                                                 tmpDomain = seq[ranges[i][0]:ranges[i][1]+1]
                                                 fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]+1) + '-' + str(ranges[i][1]+1) + '\n' + tmpDomain + '\n')
 
-        def parsemms2_nccheck(args, outdir, basename):
+        def parsemms2_nccheck(searchTable, outdir, basename):
+                # Set up
                 import os
                 from Bio import SeqIO
                 from itertools import groupby
-                # Load in file as a groupby iterator
-                print('Parsing MMseq2 output (N/C-check protocol)...')
-                mms2_file = os.path.join(os.getcwd(), outdir, basename + '_mmseqs2SEARCH.m8')
-                grouper = lambda x: x.split('\t')[0]
-                # Pull out potential domain ranges
                 domDict = {}
-                with open(mms2_file, 'r') as fileIn:
+                # Load in file as a groupby iterator
+                grouper = lambda x: x.split('\t')[0]
+                with open(searchTable, 'r') as fileIn:
                         for key, group in groupby(fileIn, grouper):
                                 for entry in group:
                                         if entry == '\n':
@@ -702,7 +792,7 @@ class domfind:
                                                         else:
                                                                 domDict[line[1]] = [(int(line[8]), int(line[9]))]
                 if len(domDict) == 0:
-                        print('No potential novel domain regions were found from PSI-BLAST. Program end.')
+                        print('No potential novel domain regions were found from MMseqs2. Program end.')
                         quit()
                 # Split overlapping domain ranges
                 for key, value in domDict.items():
