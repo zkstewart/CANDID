@@ -29,24 +29,25 @@ def validate_args(args):
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
         # Validate program execution is successful
-        program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
-        program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
-        program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
-        program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
-        program_execution_check(os.path.join(args.segdir, 'seg'))
-        program_execution_check(os.path.join(args.python2dir, 'python -h'))
-        python_version_check(args.python2dir)
-        program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
-        if platform.system() == 'Windows':
-                program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
-        if platform.system() == 'Windows':
-                cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
-        else:
-                program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
-        if platform.system() == 'Windows':
-                cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
-        else:
-                program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
+        if False:       ## TESTING
+                program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
+                program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
+                program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
+                program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
+                program_execution_check(os.path.join(args.segdir, 'seg'))
+                program_execution_check(os.path.join(args.python2dir, 'python -h'))
+                python_version_check(args.python2dir)
+                program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
+                if platform.system() == 'Windows':
+                        program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
+                if platform.system() == 'Windows':
+                        cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
+                else:
+                        program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
+                if platform.system() == 'Windows':
+                        cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
+                else:
+                        program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
         # Validate integer arguments
         intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA']
         for entry in intArgs:
@@ -348,8 +349,11 @@ IMPORTANT: Note that any directories referred to in this program should NOT incl
 
 # Required
 p = argparse.ArgumentParser(description=usage, formatter_class=argparse.RawDescriptionHelpFormatter)
-p.add_argument("fasta", type = str, help="Specify the fasta file from which domains will be identified.")
-p.add_argument("outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
+#p.add_argument("fasta", type = str, help="Specify the fasta file from which domains will be identified.")
+#p.add_argument("outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
+p.add_argument("-fasta", dest="fasta", type = str, help="Specify the fasta file from which domains will be identified.")
+p.add_argument("-outdir", dest="outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
+
 # Opts 0: Basic program requirements which do not need to be specified in all cases
 p.add_argument("-config", dest="config", type = str,
                   help="Specify the config file used for parameter settings; if not provided and you are beginning a new run, defaults will be used; if you are resuming a previous run, this program will read in the parameter file within the specified 'outdir' directory.")
@@ -431,11 +435,17 @@ p.add_argument("-generate_config", dest="generate_config", action = "store_true"
                   help="Instead of running this program, just generate a .config file within the specified outdir; this will be a combination of default parameters plus any you specify here on the command-line.")
 
 args = p.parse_args()
+## HARD CODED FOR TESTING
+args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
+args.outdir = 'newtest'
 
 #### DATA PREPARATION
 
 # Handle output directory for a new or existing run
 args = output_arg_handling(args)
+
+## HARD CODED FOR TESTING
+args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\newtest\newtest_run109.config'
 
 # Combine command-line & config file arguments
 if args.config != None:
@@ -534,13 +544,16 @@ if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
 
 ### PARSE MMSEQS2
 if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
-        unprocessedDoms = domfind.parsemms2tab(outputBase + '_mmseqs2SEARCH.m8', args.cleanAA)
+        unprocessedCoords = domfind.parsemms2tab_to_coords(outputBase + '_mmseqs2SEARCH.m8', args.cleanAA)
+        unprocessedArrays = domfind.parsemms2tab_to_array(outputBase + '_mmseqs2SEARCH.m8', outputBase + '_cdhit.fasta', args.cleanAA)
         # Exit condition if we found nothing
-        if unprocessedDoms == {}:
+        if unprocessedCoords == {}:
                 print('No potential novel domain regions were found from MMseqs2. Program end.')
                 quit()
-        #domfind.parsemms2_peaks(args, outputDir, fasta_base)
-        domDict = domfind.parsemms2_nccheck(unprocessedDoms, args.cleanAA)
+        #domDict = domfind.parsemms2_nccheck(unprocessedCoords, args.cleanAA)
+        stopdom
+        #seqArrays, lowLenCutoff = unprocessedArrays, args.cleanAA
+        domDict = domfind.parsemms2_peaks(unprocessedArrays, args.cleanAA)
         domfind.fasta_domain_extract(domDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
 
 stophere
