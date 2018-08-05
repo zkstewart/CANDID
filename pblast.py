@@ -73,7 +73,7 @@ class domfind:
                         raise Exception('CD-HIT Error text below' + str(cderr.decode("utf-8")))
                 
         def chunk_fasta(outputDir, inputFasta, fastaSuffix, threads):
-                import os
+                import os, math
                 from Bio import SeqIO
                 # Quickly handle 1 thread arguments
                 if threads == 1:
@@ -85,7 +85,19 @@ class domfind:
                                 if line.startswith('>'):
                                         numSeqs += 1
                 # Find out where we are chunking the file
-                chunkSize = int(numSeqs / threads) + (numSeqs % threads > 0)        # Need to round up
+                rawNum = numSeqs / threads                              # In cases where threads > numSeqs, rawNum will be less than 1. numRoundedUp will equal the number of threads, and so we'll end up rounding these to 1. Yay!
+                numRoundedUp = round((rawNum % 1) * threads, 0)         # By taking the decimal place and multiplying it by the num of threads, we can figure out how many threads need to be rounded up to process every sequence
+                chunkPoints = []
+                ongoingCount = 0
+                for i in range(threads):
+                        if i+1 <= numRoundedUp:                 # i.e., if two threads are being rounded up, we'll round up the first two loops of this
+                                chunkPoints.append(math.ceil(rawNum) + ongoingCount)    # Round up the rawNum, and also add our ongoingCount which corresponds to the number of sequences already put into a chunk
+                                ongoingCount += math.ceil(rawNum)
+                        else:
+                                chunkPoints.append(math.floor(rawNum) + ongoingCount)
+                                ongoingCount += math.floor(rawNum)
+                        if ongoingCount >= numSeqs:             # Without this check, if we have more threads than sequences, we can end up with "extra" numbers in the list (e.g., [1, 2, 3, 4, 5, 6, 6, 6, 6, 6]).
+                                break                           # This doesn't actually affect program function, but for aesthetic reasons and for clarity of how this function works, I prevent this from occurring.
                 # Perform the chunking
                 ongoingCount = 0    # This will keep track of what sequence number we are on
                 records = SeqIO.parse(open(inputFasta, 'r'), 'fasta')
@@ -102,7 +114,7 @@ class domfind:
                                 for record in records:      # We'll run out of records if we get to a point where ongoingCount == numSeqs
                                         fileOut.write('>' + record.description + '\n' + str(record.seq) + '\n')
                                         ongoingCount += 1
-                                        if ongoingCount % chunkSize == 0:
+                                        if ongoingCount in chunkPoints:
                                                 break
                 return fileNames
         
@@ -563,14 +575,14 @@ class domfind:
                 if mms2err.decode("utf-8") != '':
                         raise Exception('MMseqs2 tabular output generation error text below\n' + mms2err.decode("utf-8"))
 
-        def parsemms2_peaks(args, outdir, basename):
+        def parsemms2_peaks(lowLenCutoff, outdir, basename):
                 ### TO-DO: PARSE PBLAST FILE BEFORE PLATEAU ALGORITHM TO INCORPORATE QUERY AND HIT RESULTS ###
                 import os, time, math
                 import numpy as np
                 from Bio import SeqIO
                 from itertools import groupby
                 from .peakdetect import peakdetect
-                def plateau_extens(args, plateaus, values, arbitrary1, arbitrary2):
+                def plateau_extens(lowLenCutoff, plateaus, values, arbitrary1, arbitrary2):
                         ## We can handle plateau extension without causing incorrect overlap by checking for the first of two occurrences. 1: we find a point where the length cutoff becomes enforced, or 2: the coverage starts to increase again, which means we're heading towards another peak (which wasn't collapsed into this plateau).
                         for i in range(len(plateaus)):
                                 cutoff1 = math.ceil(values[i] * arbitrary1)
@@ -586,7 +598,7 @@ class domfind:
                                         if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
                                                 break
                                         # Low coverage check
-                                        elif ongoingCount <= args['cleanAA']:
+                                        elif ongoingCount <= lowLenCutoff:
                                                 if indexCov >= cutoff1:
                                                         newStart = x
                                                         continue
@@ -610,7 +622,7 @@ class domfind:
                                         if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
                                                 break
                                         # Low coverage check
-                                        elif ongoingCount <= args['cleanAA']:
+                                        elif ongoingCount <= lowLenCutoff:
                                                 if indexCov >= cutoff1:
                                                         newEnd = x
                                                         continue
@@ -691,7 +703,7 @@ class domfind:
                                         plateaus.append(plat)
                                         values.append(value)
                                 if len(plateaus) == 1:                          ### ADD EXTENSION: MAKE PLATEAU EXTENSION A FUNCTION ###
-                                        plateaus = plateau_extens(args, plateaus, values, arbitrary1, arbitrary2)
+                                        plateaus = plateau_extens(lowLenCutoff, plateaus, values, arbitrary1, arbitrary2)
                                         domDict[key] = plateaus
                                         continue
                                 # Chain plateaus together
@@ -700,7 +712,7 @@ class domfind:
                                         depressE = plateaus[i+1][0] -1                  # +1/-1 to start/end respectively  since the plateau ranges are the actual regions of overlap, i.e., 1->3 means 1, 2, and 3. Thus, 4 is the first character that does not overlap.
                                         depressL = depressE - depressS + 1          # +1 here to get the proper length of the gap region (i.e., a gap of 1 amino acid might look like 3->3, 3-3 = 0, so we need to +1
                                         depressR = array[depressS:depressE + 1]
-                                        if depressL <= args['cleanAA']:
+                                        if depressL <= lowLenCutoff:
                                                 # Use arbitrary value 1 to determine if chaining is correct
                                                 maxVal = max([values[i], values[i+1]])  # We determine chaining based on the highest coverage plateau for a few reasons. Most importantly, the higher coverage plateau is most likely to be a real domain, so we should prioritise it and make sure it doesn't join to lower coverage regions unless they meet our arbitrary chaining limits
                                                 cutoff = math.ceil(maxVal * arbitrary1) # We round up to handle low numbers properly. For example, 2*0.5=1.0. We don't need to round this, and 1.0 is good here if depressL<= cleanAA. However, 2*0.75=1.5. Rounding down would be 1, but this would mean we chain probably separate domains together incorrectly. Thus, by rounding up, we are more strict.
@@ -741,7 +753,7 @@ class domfind:
                                         if overlap == 'n':          # Exit condition if we make it through the 'for y' loop without encountering any overlaps
                                                 break
                                 # Extend plateaus following slightly modified chaining rules
-                                plateaus = plateau_extens(args, plateaus, values, arbitrary1, arbitrary2)
+                                plateaus = plateau_extens(lowLenCutoff, plateaus, values, arbitrary1, arbitrary2)
                                 # Add results to our domDict for later output generation
                                 domDict[key] = plateaus
 
@@ -756,46 +768,42 @@ class domfind:
                                                 tmpDomain = seq[ranges[i][0]:ranges[i][1]+1]
                                                 fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]+1) + '-' + str(ranges[i][1]+1) + '\n' + tmpDomain + '\n')
 
-        def parsemms2_nccheck(searchTable, outdir, basename):
+        def parsemms2tab(mms2Table, lowLenCutoff):
                 # Set up
-                import os
-                from Bio import SeqIO
                 from itertools import groupby
                 domDict = {}
-                # Load in file as a groupby iterator
                 grouper = lambda x: x.split('\t')[0]
-                with open(searchTable, 'r') as fileIn:
+                # Load in file as a groupby iterator
+                with open(mms2Table, 'r') as fileIn:
                         for key, group in groupby(fileIn, grouper):
                                 for entry in group:
                                         if entry == '\n':
                                                 continue
                                         line = entry.split('\t')
-                                        #### NEW ADDITION: Allow for the discovery of internal repeats. Previously we skipped all self-hits. Now, we look to see if there is overlap. If there is less than 5% or 5 AA overlap (to account for shorter domains), we accept it as a hit ###
+                                        # Extract details
+                                        qCoord = (int(line[6]), int(line[7]))
+                                        tCoord = (int(line[8]), int(line[9]))
+                                        # Allow discovery of internal repeats by looking to see if there is overlap between self hits
                                         if line[0] == line[1]:
-                                                #print('Active 1')
-                                                range1 = set(range(int(line[6]), int(line[7])))
-                                                range2 = set(range(int(line[8]), int(line[9])))
-                                                if not (len(range1-range2) / len(range1) > 0.95 or len(range1) - len(range1-range2) < 5):
-                                                        #print('Active 2')
+                                                ovl = min(qCoord[1], tCoord[1]) - max(qCoord[0], tCoord[0]) + 1         # +1 since we're working 1-based here; 300-250==50, but this range is inclusive of 250 and 300, so it should be 51
+                                                if ovl / (qCoord[1] - qCoord[0] + 1) > 0.05 and ovl > 5:                # If there is more than 5% or 5 AA overlap (to account for shorter domains), we reject it as a hit
                                                         continue
-                                        if line[0] == line[1]:
-                                                print('Active?')
-                                        ### NEW ADDITION ###
-                                        else:
-                                                if not int(line[7]) + 1 - int(line[6]) < args['cleanAA']:                 # Added in later: This will mean we only find putative globular domains. Another function may be made to find regions specifically shorter than the argument length which are putative motifs.
-                                                        if line[0] in domDict:
-                                                                domDict[line[0]].append((int(line[6]), int(line[7])))
-                                                        else:
-                                                                domDict[line[0]] = [(int(line[6]), int(line[7]))]
-                                                        if line[1] in domDict:
-                                                                domDict[line[1]].append((int(line[8]), int(line[9])))
-                                                        else:
-                                                                domDict[line[1]] = [(int(line[8]), int(line[9]))]
-                if len(domDict) == 0:
-                        print('No potential novel domain regions were found from MMseqs2. Program end.')
-                        quit()
-                # Split overlapping domain ranges
+                                        # Handle any hits which reach here by checking overlap length
+                                        if (qCoord[1] - qCoord[0] + 1) > lowLenCutoff:                                  # This will mean we only find putative globular domains
+                                                if line[0] in domDict:
+                                                        domDict[line[0]].append(qCoord)
+                                                else:
+                                                        domDict[line[0]] = [qCoord]
+                                                if line[1] in domDict:
+                                                        domDict[line[1]].append(tCoord)
+                                                else:
+                                                        domDict[line[1]] = [tCoord]
+                return domDict
+        
+
+        def parsemms2_nccheck(domDict, lowLenCutoff):
                 for key, value in domDict.items():
+                        # Remove redundancy
                         value = list(set(value))
                         # Skip processing if only one domain range
                         if len(value) == 1:
@@ -832,13 +840,13 @@ class domfind:
                                                 n_value = (value[i][0], value[i+1][0]-1)
 
                                                 # Check if we should split this N overhang off as its own potential domain, or delete it
-                                                if n_value[1] - n_value[0] >= args['cleanAA']:
+                                                if n_value[1] - n_value[0] >= lowLenCutoff:
                                                         # Remove N overhang from current value
                                                         value[i] = (n_value[1] + 1, value[i][1])
                                                         # Insert N overhang as new domain
                                                         value.insert(i, n_value)
                                                         # Check if the trimmed current value has been shortened too much
-                                                        if value[i+1][1] - value[i+1][0] < args['cleanAA']:
+                                                        if value[i+1][1] - value[i+1][0] < lowLenCutoff:
                                                                 del value[i+1]
                                                                 continue        # Only need to continue here if we insert and delete the old val, since it doesn't disrupt our 'for i' loop
                                                         break                   # We break here if we insert and don't delete the old value, since it will disrupt our 'for i' loop
@@ -847,10 +855,9 @@ class domfind:
                                                         # Remove N overhang from current value
                                                         value[i] = (value[i+1][0], value[i][1])
                                                         # Check if the trimmed current value has been shortened too much
-                                                        if value[i][1] - value[i][0] < args['cleanAA']:
+                                                        if value[i][1] - value[i][0] < lowLenCutoff:
                                                                 del value[i]
                                                                 break           # We break here if we delete the old value since it disrupts our 'for i' loop. Otherwise, we can continue straight into the C check process
-                                                        
                                         ### C Check
                                         # Contingency to see if the C values are equivalent if we continue here straight from the N check
                                         if value[i][1] == value[i+1][1]:
@@ -870,7 +877,7 @@ class domfind:
                                                 tmp_mark = 1 # As above
                                         c_value = (shorter_value[1]+1, longer_value[1])
                                         # Check if we should split this C overhang off as its own potential domain, or delete it
-                                        if c_value[1] - c_value[0] >= args['cleanAA']:
+                                        if c_value[1] - c_value[0] >= lowLenCutoff:
                                                 # Delete the longer sequence
                                                 if tmp_mark == 0:
                                                         del value[i]
@@ -890,17 +897,24 @@ class domfind:
                                                 break
                         # Update domDict
                         domDict[key] = value
-                                                                        
-                # Format output fasta file
-                infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')
-                records = SeqIO.parse(open(infile, 'rU'), 'fasta')
-                outfile = open(os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta'), 'w')
-                for record in records:
-                        seqid = record.id
-                        if seqid in domDict:
+                return domDict
+
+        def fasta_domain_extract(domDict, fastaFile, outputFileName):
+                # Setup
+                from Bio import SeqIO
+                # Load input file
+                records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
+                # Produce output
+                with open(outputFileName, 'w') as fileOut:
+                        for record in records:
+                                if record.description in domDict:
+                                        seqid = record.description
+                                elif record.id in domDict:  # POSSIBLE PROBLEM: May need to be more strict with ID parsing consistency especially since MMseqs2 does change sequence IDs...
+                                        seqid = record.id
+                                else:
+                                        continue
                                 seq = str(record.seq)
                                 ranges = domDict[seqid]
                                 for i in range(len(ranges)):
                                         tmpDomain = seq[ranges[i][0]-1:ranges[i][1]]
-                                        outfile.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]) + '-' + str(ranges[i][1]) + '\n' + tmpDomain + '\n')
-                outfile.close()
+                                        fileOut.write('>' + record.description + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]) + '-' + str(ranges[i][1]) + '\n' + tmpDomain + '\n')

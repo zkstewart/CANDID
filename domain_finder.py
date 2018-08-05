@@ -533,9 +533,17 @@ if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
         domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', args.threads)
 
 ### PARSE MMSEQS2
-if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_unclustered_domains.fasta')):
+if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
+        unprocessedDoms = domfind.parsemms2tab(outputBase + '_mmseqs2SEARCH.m8', args.cleanAA)
+        # Exit condition if we found nothing
+        if unprocessedDoms == {}:
+                print('No potential novel domain regions were found from MMseqs2. Program end.')
+                quit()
         #domfind.parsemms2_peaks(args, outputDir, fasta_base)
-        domfind.parsemms2_nccheck(args, outputDir, fasta_base)
+        domDict = domfind.parsemms2_nccheck(unprocessedDoms, args.cleanAA)
+        domfind.fasta_domain_extract(domDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+
+stophere
 
 #### DOMAIN CLUSTERING
 rejects_list = []
