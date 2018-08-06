@@ -544,15 +544,11 @@ if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
 
 ### PARSE MMSEQS2
 if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
-        unprocessedCoords = domfind.parsemms2tab_to_coords(outputBase + '_mmseqs2SEARCH.m8', args.cleanAA)
         unprocessedArrays = domfind.parsemms2tab_to_array(outputBase + '_mmseqs2SEARCH.m8', outputBase + '_cdhit.fasta', args.cleanAA)
         # Exit condition if we found nothing
-        if unprocessedCoords == {}:
+        if unprocessedArrays == {}:
                 print('No potential novel domain regions were found from MMseqs2. Program end.')
                 quit()
-        #domDict = domfind.parsemms2_nccheck(unprocessedCoords, args.cleanAA)
-        stopdom
-        #seqArrays, lowLenCutoff = unprocessedArrays, args.cleanAA
         domDict = domfind.parsemms2_peaks(unprocessedArrays, args.cleanAA)
         domfind.fasta_domain_extract(domDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
 
