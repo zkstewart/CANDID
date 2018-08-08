@@ -277,14 +277,16 @@ def cluster_hmms(msaDir, hmmer3dir, concatName):
         if hmmerr.decode("utf-8") != '':
                 raise Exception('hmmpress error text below' + str(hmmerr.decode("utf-8")))
 
-def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
-        import os, re
+def hmmer_grow(domDict, unclustFasta, outputBase, group_dict, rejects_list, iterate):   # Outputbase refers to the path generated in the domain_finder script
+        # Set up
+        import os
         from Bio import SeqIO
-        # Define functions
-        def seqgrab(args, outdir, basename, seqid, start, stop):
+        iterate += 1    # If we don't reset iterate to 0 by adding a new domain, this lets us ensure that the iterate value increases
+        # Define functions integral to this one
+        def seqgrab(outputBase, seqid, start, stop):
                 # Pull out the protein region
-                infile = os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta')   # We grab the hits from the cdhit.fasta file because the clean.fasta file might have a small stretch of low complexity region inside the sequence region that HMMER is hitting against
-                records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+                infile = os.path.join(outputBase + '_cdhit.fasta')   # We grab the hits from the cdhit.fasta file because the clean.fasta file might have a small stretch of low complexity region inside the sequence region that HMMER is hitting against
+                records = SeqIO.parse(open(infile, 'r'), 'fasta')
                 for record in records:
                         if record.id == seqid:
                                 aaseq = str(record.seq)
@@ -293,10 +295,9 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                 aaseq = aaseq[int(start)-1:int(stop)]           # -1 to start to make this 0-indexed
                 aarecord.seq = aaseq
                 return aaseq, aarecord
-        def seqnamer(args, outdir, basename, seqid, start, stop):
+        def seqnamer(unclustFasta, seqid, start, stop):
                 # Figure out which domain number this region should be
-                infile = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
-                records = SeqIO.parse(open(infile, 'rU'), 'fasta')
+                records = SeqIO.parse(open(unclustFasta, 'r'), 'fasta')
                 seqnum = 1
                 for record in records:
                         baseid = '_'.join(record.id.split('_')[0:-3])
@@ -304,34 +305,18 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 seqnum = int(record.id.split('_')[-2])+1                # We do it this way because we modify the sequences in our record in-place, which means we might originally have Domain 1-3 for a baseid, but we might delete Domain 2. Thus, because the fasta files are ordered, the last match with the baseid should contain the highest domain number, so we just +1 to it.
                                 #seqnum += 1
                 # Add to fasta
-                newseqname = seqid + '_Domain_' + str(seqnum) + '_' + start + '-' + stop
+                newseqname = seqid + '_Domain_' + str(seqnum) + '_' + str(start) + '-' + str(stop)
                 return newseqname
         
-        # Set up iteration
-        print('Checking HMMER results for changes...')
-        iterate += 1
-        #if iterate == 0:
-        #        iterate = 1
-        #else:
-        #        iterate = 2
-        # Get hmmer output file details
-        align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
-        hmmer_results = os.path.join(align_out_dir, 'tmp_hmmerParsed.results')
-        # Parse the unclustered domains fasta file
-        infile = os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta')
-        unclustDoms = list(SeqIO.parse(open(infile, 'rU'), 'fasta'))
-        newDoms = []                # These will be added to the fasta file when we generate it at the end of the hmmer_grow function
-        # Loop through the hmmer file and find its best match in the unclustered sequences file and make modifications indicated by hmmer
-        with open(hmmer_results, 'r') as fileIn:                # Looping through the HMMER file line-by-line is good since we already have a dictionary structure if we want to look at other regions for the particular sequence ID on this line
-                for line in fileIn:
-                        if line == '' or line == '\n':
-                                continue                # Skip blank lines, shouldn't exist, but can't hurt
-                        # Parse line
-                        sl = line.rstrip('\n').rstrip('\r').split()
-                        pid = sl[0]
-                        dstart = sl[1]
-                        dend = sl[2]
-                        did = sl[3]
+        # Load in the unclustered domains fasta as a list of records [this lets us append items to it]
+        unclustDoms = list(SeqIO.parse(open(unclustFasta, 'r'), 'fasta'))
+        # Loop through the domDict object and find its best match in the unclustered sequences file and make modifications indicated by hmmer
+        for key, value in domDict.items():
+                for entry in value:
+                        # Extract details from entry [this gives them informative value names, and also is a way of be re-using an older bit of code]
+                        pid = key
+                        dstart = entry[1]
+                        dend = entry[2]
                         hmmerrange = set(range(int(dstart), int(dend)+1))   # +1 to stop positions to keep everything 1-indexed
                         # Find best match in the fasta file
                         best = [0,0,0,0]
@@ -354,8 +339,8 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                         # Figure out if this hmmer region is novel
                         if best[2] == 0:                                                                                                                                                        # i.e., this sequence region does not overlap anything in the unclustered domains fasta
                                 # Add unadulterated into the unclustDoms list
-                                newseqname = seqnamer(args, outdir, basename, pid, dstart, dend)
-                                newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                                newseqname = seqnamer(unclustFasta, pid, dstart, dend)
+                                newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
                                 newrec.id = newseqname
                                 unclustDoms.append(newrec)
                                 #newDoms.append([newseqname, newseq])                # Add this directly into the list
@@ -366,8 +351,8 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 newrange = hmmerrange-positionsOverlapped
                                 newstart = str(min(newrange))
                                 newend = str(max(newrange))
-                                newseqname = seqnamer(args, outdir, basename, pid, newstart, newend)
-                                newseq, newrec = seqgrab(args, outdir, basename, pid, newstart, newend) # Add to list
+                                newseqname = seqnamer(unclustFasta, pid, newstart, newend)
+                                newseq, newrec = seqgrab(outputBase, pid, newstart, newend) # Add to list
                                 newrec.id = newseqname
                                 unclustDoms.append(newrec)
                                 print('Added trimmed novel domain to file (' + newseqname + ')')
@@ -378,7 +363,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 if best[2] >= 0.9 or best[3] >= 0.9:
                                         print('Good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)                                 # We don't care about the newrec here since we just need to modify the existing record in place, we're not adding a new record or fusing existing ones
+                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)                                 # We don't care about the newrec here since we just need to modify the existing record in place, we're not adding a new record or fusing existing ones
                                         for x in range(len(unclustDoms)):
                                                 if unclustDoms[x].id == best[0]:
                                                         unclustDoms[x].id = newseqname
@@ -387,7 +372,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 elif best[2] >= 0.5 or best[3] >= 0.5:         # note that for divergent matches we use 'and'. This is important to prevent fragmentary model matches which overlap an established sequence from overwriting the full length sequence which is part of the model.
                                         print('Divergent match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
                                         for x in range(len(unclustDoms)):
                                                 if unclustDoms[x].id == best[0]:
                                                         unclustDoms[x].id = newseqname
@@ -398,7 +383,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                         if secondBest[2] == 0 and secondBest[3] == 0:
                                                 print('Poor match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                                                 newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                                newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                                                newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
                                                 for x in range(len(unclustDoms)):
                                                         if unclustDoms[x].id == best[0]:
                                                                 unclustDoms[x].id = newseqname
@@ -414,7 +399,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 if best[2] >= 0.9 and best[3] >= 0.9 and secondBest[2] <= 0.5:
                                         print('Ambiguous but good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
                                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
                                         for x in range(len(unclustDoms)):
                                                 if unclustDoms[x].id == best[0]:
                                                         unclustDoms[x].id = newseqname
@@ -423,7 +408,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                 else:
                                         print('Fusing overlap: ' + best[0] + ' : ' + secondBest[0])
                                         newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(args, outdir, basename, pid, dstart, dend)
+                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
                                         # Delete underlying sequences
                                         for i in range(0, 2):
                                                 for x in range(len(unclustDoms)):
@@ -439,7 +424,7 @@ def hmmer_grow(args, outdir, basename, group_dict, rejects_list, iterate):
                                         
         # Update fasta file
         if iterate != 2:                # If iterate == 2, then we're going to end the while loop. There may be some changes indicated by hmmer from this function, but we're assuming there will be very few since it's already been altered by hmmer once with no impact on the discovery of new domains.
-                with open(os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta'), 'w') as outfile:          # This overwrites the old file which is okay since we've already loaded the records in as a list
+                with open(outputBase + '_unclustered_domains.fasta', 'w') as outfile:          # This overwrites the old file which is okay since we've already loaded the records in as a list
                         for x in range(len(unclustDoms)):
                                 seqid = unclustDoms[x].id
                                 seq = str(unclustDoms[x].seq)

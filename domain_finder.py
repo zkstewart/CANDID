@@ -1,9 +1,9 @@
 #! python3
 
 # Import external packages
-import argparse, os, time, platform
+import argparse, os, time, platform, shutil
 # Import classes from included script folder
-from domfind import benchparse, peakdetect
+from domfind import benchparse
 from domfind import domtblout_handling, domfind, domclust
 
 # Define functions for later use
@@ -569,13 +569,13 @@ if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
                 # Alignment steps
                 tmpDir = domclust.tmpdir_setup(args.outdir, 'tmp_alignments')
                 domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, args.threads, group_dict)
+                # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
-                domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)
-                ## UPDATED TIL HERE
-                domtblout_handling.hmmer_reparse(parsedFile, evalueCutoff)
-                #domclust.parse_domtblout(os.path.join(outputDir, 'tmp_alignments', 'tmp_hmmer.results'), args.hmmevalnov, os.path.join(outputDir, 'tmp_alignments', 'tmp_hmmerParsed.results'))
-                iterate = domclust.hmmer_grow(args, outputDir, fasta_base, group_dict, rejects_list, iterate)
+                domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
+                domDict = domtblout_handling.hmmer_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, True)        # True here tells the function to pull out the basename for these domains since they'll likely have the full path to the file
+                # Cluster growth step
+                iterate = domclust.hmmer_grow(domDict, outputBase + '_unclustered_domains.fasta', outputBase, group_dict, rejects_list, iterate)
                 if args.numiters != 0:       # This prevents the numiters exit condition from activating
                         loopCount += 1
         # Provide informative loop exit text
@@ -583,6 +583,14 @@ if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
                 print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
         else:
                 print('Program finished successfully after no new domain regions were able to be found.')
+
+#### FINAL RESULTS PRESENTATION
+shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_' + fastaBase + '.domtblout'))
+shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
+print('Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
+print('Individual domain alignments can be found in "' + tmpDir + '".')
+
+print('### PROGRAM END ###')
 print(time.ctime())
 ### 
 
