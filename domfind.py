@@ -179,7 +179,6 @@ def run_hmmer3(hmmer3dir, hmmDB, outputDir, threads, evalue, inputFasta, outputF
         import os, subprocess
         # Check if we need to run hmmpress
         if not os.path.isfile(hmmDB + '.h3f') and not os.path.isfile(hmmDB + '.h3i') and not os.path.isfile(hmmDB + '.h3m') and not os.path.isfile(hmmDB + '.h3p'):
-                print('Running hmmpress to format your database...')
                 cmd = os.path.join(hmmer3dir, 'hmmpress') + ' -f "' + hmmDB + '"'
                 run_hmmpress = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
                 hmmout, hmmerr = run_hmmpress.communicate()
@@ -187,7 +186,6 @@ def run_hmmer3(hmmer3dir, hmmDB, outputDir, threads, evalue, inputFasta, outputF
                         raise Exception('hmmpress error text below' + str(hmmerr.decode("utf-8")))
         # Run HMMER3
         cmd = os.path.join(hmmer3dir, 'hmmsearch') + ' --cpu ' + str(threads) + ' -E ' + str(evalue) + ' --domtblout ' + outputFileName + ' "' + hmmDB + '" "' + inputFasta + '"'
-        print('Running hmmsearch to detect known domains...')
         run_hmmer3 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
         hmmout, hmmerr = run_hmmer3.communicate()
         if hmmerr.decode("utf-8") != '':
@@ -197,7 +195,6 @@ def hmmer_parse_domfind(domtbloutFile, evalueCutoff, skip):
         # Set up
         import os
         domDict = {}                            # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
-        print('Parsing hmmsearch output...')
         # Main function
         with open(domtbloutFile, 'r') as fileIn:
                 for line in fileIn:

@@ -1,7 +1,7 @@
 #! python3
 
 # Import external packages
-import argparse, os, time, platform, shutil
+import argparse, os, time, shutil
 # Import classes from included script folder
 from domfind import benchparse
 from domfind import domtblout_handling, domfind, domclust
@@ -10,6 +10,15 @@ from domfind import domtblout_handling, domfind, domclust
 
 # Argument validation
 def validate_args(args):
+        import platform
+        # Prevent operation on Windows immediately to not get user hopes up
+        '''I tried to make this program Windows-compatible, and it mostly is, but I can't figure out how to get
+        Hammock (and more specifically, HHsuite) to work with Cygwin. If I can resolve this problem the rest of
+        the code is ready-to-go with Windows... for the time being, I need to disable it'''
+        if platform.system() == 'Windows':
+                print('This program is currently not compatible with Windows due to its reliance upon HHsuite for protein clustering.')
+                print('This might change in the future if I can figure out how to make HHsuite work with Cygwin. Until then, try running this on a Linux PC or set up a Virtual Machine.')
+                quit()
         # Ensure that no None values exist
         for key, value in vars(args).items():
                 if value == None and key != 'config':   # Config is the only argument that can be None right now
@@ -35,11 +44,13 @@ def validate_args(args):
                 program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
                 program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
                 program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
+                program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
                 program_execution_check(os.path.join(args.segdir, 'seg'))
+                program_execution_check(os.path.join(args.javadir, 'java -h'))
                 program_execution_check(os.path.join(args.python2dir, 'python -h'))
                 python_version_check(args.python2dir)
                 program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
-                if platform.system() == 'Windows':
+                if platform.system() == 'Windows':      # I'm going to leave this in the code since it doesn't hurt, and if I can get this to be Windows-compatible in the future it'll all be here waiting
                         program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
                 if platform.system() == 'Windows':
                         cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
@@ -175,14 +186,14 @@ def default_parameter_dict(inputKey):
         '''
         defaultParams = {'threads': 1, 'mmseqs2dir': '', 'cdhitdir': '',
                          'hmmer3dir': '', 'signalpdir': '', 'segdir': '',
-                         'mafftdir': '', 'cygwindir': '', 'cdc': 0.4,
+                         'javadir': '', 'mafftdir': '', 'cdc': 0.4,
                          'cdn': 2, 'cdg': 0, 'cdas': 0.9, 'cdal': 0.6, 'cdm': 1000,
                          'signalporg': 'euk', 'hmmeval': 1e-1, 'hmmevalnov': 1e-1,
                          'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n',
                          'minsize': 3,'minsample': 2, 'leaf': False, 'singleclust': False,
-                         'numiters': 0, 'cleanAA': 30,
+                         'numiters': 0, 'cleanAA': 30, 'verbose': False,
                          #'fasta': , 'outdir': None, 'config': None,         
-                         'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
+                         'hammockdir': None, 'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
         mandatoryParams = {'fasta': None, 'outdir': None, 'config': None}       # By separating these, this lets us know that these shouldn't be defaulted and shouldn't be in the config file at all
         cmdLineOnlyParams = {'generate_config': None, 'benchmark': None}        # We also separate these since they should not be in the config file but aren't mandatory
         if inputKey in defaultParams:
@@ -317,6 +328,10 @@ def file_name_gen(prefix, suffix):
                 else:
                         return prefix + str(ongoingCount) + suffix
 
+def verbose_print(verbose, text):
+        if verbose:
+                print(text)
+
 #### USER INPUT SECTION
 usage = """Usage: <fasta file> <output directory> <threads> [-options]
 ----
@@ -371,10 +386,14 @@ p.add_argument("-sigpdir", dest="signalpdir", type = str,
                   help="Specify the directory where signalp executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-segdir", dest="segdir", type = str,
                   help="Specify the directory where seg executables are located. If this is already in your PATH, you can leave this blank.")
+p.add_argument("-javadir", dest="javadir", type = str,
+                  help="Specify the directory where the java executable file is located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-mafftdir", dest="mafftdir", type = str,
                   help="Specify the directory where the mafft executables on a Unix system or .bat file on a Windows is located. If this is already in your PATH, you can leave this blank.")
-p.add_argument("-cwdir", dest="cygwindir", type = str,
-                  help="If running this script on a Windows system, Cygwin is required. Specify the location of the /bin directory here. If running on other systems, or if this is already in your PATH, you can leave this blank.")
+#p.add_argument("-cwdir", dest="cygwindir", type = str,
+#                  help="If running this script on a Windows system, Cygwin is required. Specify the location of the /bin directory here. If running on other systems, or if this is already in your PATH, you can leave this blank.")
+p.add_argument("-hammdir", dest="hammockdir", type = str,
+                  help="Specify the directory where the Hammock.jar file is located. This MUST be specified here or in your config file.")
 p.add_argument("-py2dir", dest="python2dir", type = str,
                   help="Specify the python2.7 directory that contains python.exe. This MUST be specified here or in your config file.")
 p.add_argument("-coilsdir", dest="coilsdir", type = str,
@@ -434,11 +453,15 @@ p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = 
 # Opts 9: Alternative program operations
 p.add_argument("-generate_config", dest="generate_config", action = "store_true", default = False,
                   help="Instead of running this program, just generate a .config file within the specified outdir; this will be a combination of default parameters plus any you specify here on the command-line.")
+p.add_argument("-v", dest="verbose", action = "store_true", default = False,
+                  help="Optionally print program progress details.")
+
 
 args = p.parse_args()
 ## HARD CODED FOR TESTING
-args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
+args.fasta = '/home/lythl/Desktop/CANDID/cal_dge_orfs_prot_33AA.fasta'
 args.outdir = 'newtest'
+args.verbose = True
 
 #### DATA PREPARATION
 
@@ -446,7 +469,7 @@ args.outdir = 'newtest'
 args = output_arg_handling(args)
 
 ## HARD CODED FOR TESTING
-args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\newtest\newtest_run109.config'
+args.config = '/home/lythl/Desktop/CANDID/newtest/newtest_run27.config'
 
 # Combine command-line & config file arguments
 if args.config != None:
@@ -464,14 +487,15 @@ if args.generate_config:
         print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + args.outdir)
         quit()
 
-print('### PROGRAM START ###')
-print(time.ctime())
+verbose_print(args.verbose, '### PROGRAM START ###')
+verbose_print(args.verbose, time.ctime())
 
 ### SET UP VALUES FOR FILE NAMES
 fastaBase = os.path.basename(args.fasta).rsplit('.', maxsplit=1)[0]
 outputBase = os.path.join(args.outdir, fastaBase)
 
 ### RUN CD-HIT
+verbose_print(args.verbose, '# Step 1/9: CD-HIT clustering')
 if not os.path.isfile(outputBase + '_cdhit.fasta'):
         params = (args.cdc, args.cdn, args.cdg, args.cdas, args.cdal, args.cdm, args.threads)
         domfind.run_cdhit(args.cdhitdir, args.outdir, args.fasta, fastaBase + '_cdhit.fasta', params)
@@ -480,6 +504,7 @@ if not os.path.isfile(outputBase + '_cdhit.fasta'):
 chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
 
 ### RUN HMMER3
+verbose_print(args.verbose, '# Step 2/9: HMMER non-novel domain prediction')
 if not os.path.isfile(outputBase + '_cdhit_hmmer.results'):
         domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, outputBase + '_cdhit.fasta', outputBase + '_cdhit_hmmer.results')
 
@@ -497,14 +522,16 @@ if not os.path.isfile(outputBase + '_domCut.fasta'):
         domfind.coord_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
 
 ### RUN SIGNALP
+verbose_print(args.verbose, '# Step 3/9: SignalP prediction')
 if not os.path.isfile(outputBase + '_signalp.fasta'):
         if not os.path.isfile(outputBase + '_signalp.results'):
-                domfind.run_signalp(args.signalpdir, args.cygwindir, args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)
+                domfind.run_signalp(args.signalpdir, '', args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)     # Blank '' is where args.cygwindir would go if this code were Windows-compatible
         sigpPredDict = domfind.parse_sigp_results(outputBase + '_signalp.results')
         domfind.coord_cutter(outputBase + '_domCut.fasta', sigpPredDict, outputBase + '_signalp.fasta')
         sigpPredDict = None
 
 ### RUN SEG AND COILS
+verbose_print(args.verbose, '# Step 4/9: LCR & coils prediction')
 if not os.path.isfile(outputBase + '_segcoils.fasta'):
         if not os.path.isfile(outputBase + '_seg.fasta'):
                 domfind.run_seg(args.segdir, args.outdir, chunkFiles, outputBase + '_seg.fasta')
@@ -526,6 +553,7 @@ if not os.path.isfile(outputBase + '_clean.fasta'):
 #### MMSEQS2 OPERATIONS
 
 ### MAKE MMSEQS2 DB
+verbose_print(args.verbose, '# Step 5/9: Make MMseqs2 database')
 tmpdir = os.path.join(args.outdir, 'mms2tmp')
 if not os.path.isdir(tmpdir):
         os.mkdir(tmpdir)        # If MMseqs2 still has errors with resuming runs I can add an else condition to delete and recreate the tmpdir; I believe they fixed this error at some point, however
@@ -537,6 +565,7 @@ if index_exists(fastaBase + '_clean.fasta_queryDB', args.outdir) == False:      
         domfind.indexmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, args.threads, 'query')
 
 ### RUN MMSEQS2
+verbose_print(args.verbose, '# Step 6/9: MMseqs2 sequence-sequence alignment')
 if not os.path.isfile(outputBase + '_mmseqs2SEARCH'):
         params = [args.mms2eval, args.threads, 4, 7, 0]
         domfind.runmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', params)
@@ -544,6 +573,7 @@ if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
         domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', args.threads)
 
 ### PARSE MMSEQS2
+verbose_print(args.verbose, '# Step 7/9: Parse MMseqs2 output')
 if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
         unprocessedArrays = domfind.parsemms2tab_to_array(outputBase + '_mmseqs2SEARCH.m8', outputBase + '_cdhit.fasta', args.cleanAA)
         # Exit condition if we found nothing
@@ -558,24 +588,23 @@ rejects_list = []
 current_doms = ''
 iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
+verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
+
 if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
         while iterate < 2 and loopCount <= args.numiters:             # This loop works by feeding iterate 0 into the hmmer_grow function. If no new region is found, iterate becomes 1. This is then fed back into hmmer_grow, and if there is still no new regions found, iterate becomes 2 and the while loop ends.
-                # Cluster steps
-                alf_matrix1, alf_matrix2, idlist = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', args.reduce, args.alf)   # We do this because, even if no new region is found when iterate == 0, changes to domain regions according to HMMER results still occur, and this may influence the clustering of the next round which may subsequently result in new regions being discovered.
-                group_dict, rejects_list = domclust.cluster_hdb(args.leaf, args.singleclust, args.minsize, args.minsample, alf_matrix1, alf_matrix2, idlist, rejects_list)
-                if len(group_dict) == 0:
-                        print('No potential novel domains were found. Program end.')
-                        quit()
+                # Hammock clustering
+                domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
+                groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
                 # Alignment steps
                 tmpDir = domclust.tmpdir_setup(args.outdir, 'tmp_alignments')
-                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, args.threads, group_dict)
+                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, args.threads, groupDict) # We choose not to use the alignments Hammock presents since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
                 domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
                 domDict = domtblout_handling.hmmer_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, True)        # True here tells the function to pull out the basename for these domains since they'll likely have the full path to the file
                 # Cluster growth step
-                iterate = domclust.hmmer_grow(domDict, outputBase + '_unclustered_domains.fasta', outputBase, group_dict, rejects_list, iterate)
+                iterate = domclust.hmmer_grow(domDict, outputBase + '_unclustered_domains.fasta', outputBase, groupDict, rejects_list, iterate)
                 if args.numiters != 0:       # This prevents the numiters exit condition from activating
                         loopCount += 1
         # Provide informative loop exit text
@@ -585,12 +614,12 @@ if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
                 print('Program finished successfully after no new domain regions were able to be found.')
 
 #### FINAL RESULTS PRESENTATION
+verbose_print(args.verbose, '# Step 9/9: Final output tidying')
 shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_' + fastaBase + '.domtblout'))
 shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
-print('Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
-print('Individual domain alignments can be found in "' + tmpDir + '".')
+verbose_print(args.verbose, 'Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
+verbose_print(args.verbose, 'Individual domain alignments can be found in "' + tmpDir + '".')
 
-print('### PROGRAM END ###')
-print(time.ctime())
+verbose_print(args.verbose, '### PROGRAM END ###')
+verbose_print(args.verbose, time.ctime())
 ### 
-

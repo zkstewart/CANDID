@@ -241,13 +241,11 @@ def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
                 build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, fastaFile, start, end, ongoingCount+1))
                 processing_threads.append(build)
                 build.start()
-                print('Initiated thread num ' + str(ongoingCount+1) + ' for MAFFT alignment...')
                 ongoingCount += 1
 
         # Wait for all threads to end.
         for process_thread in processing_threads:
                 process_thread.join()
-        print('MAFFT alignment completed')
 
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
@@ -604,18 +602,76 @@ def parse_joiner(args, outdir, basename, group_dict):
                 print('No more domain regions overlap, beginning the final clustering process...')
                 iterate2 = 'n'
         return iterate2
-                
-def cluster_graph(clusterer, matrix):
-        import seaborn as sns
-        import matplotlib.pyplot as plt
-        import sklearn
-        asdf = clusterer.condensed_tree_.plot()
-        color_palette = sns.color_palette('Paired', 20)
-        cluster_colors = [color_palette[x] if x >= 0
-                          else (0.5, 0.5, 0.5)
-                          for x in clusterer.labels_]
-        cluster_member_colors = [sns.desaturate(x, p) for x, p in
-                                                         zip(cluster_colors, clusterer.probabilities_)]
-        eg = sklearn.manifold.TSNE().fit_transform(matrix.data)
-        plt.scatter(*eg.T, s=50, linewidth=0, c=cluster_member_colors, alpha=0.25)
-        plt.savefig('myfig')
+
+def thread_file_name_gen(prefix, threadNum):
+        import os
+        ongoingCount = 0
+        while True:
+                if not os.path.isfile(prefix + threadNum):
+                        return prefix + threadNum
+                elif os.path.isfile(prefix + threadNum + '.' + str(ongoingCount)):
+                        ongoingCount += 1
+                else:
+                        return prefix + threadNum + '.' + str(ongoingCount)
+
+def run_hammock(hammockDir, javaDir, outputDir, threads, inputFasta):
+        import os, subprocess, shutil
+        # Remove output directory if it exists
+        '''Hammock will instantly die if the folder exists. Since it is possible that a Hammock run will be interrupted,
+        leaving the output folder intact, we need to remove it before we start the program run. Of course, this negates
+        the whole reason for Hammock's behaviour (i.e., caution) but what can we do? Ideally, the user isn't doing things
+        within the hammock_out folder...'''
+        if os.path.isdir(outputDir):
+                shutil.rmtree(outputDir)
+        # Format command
+        tmpDir = os.path.join(outputDir, 'tmp')
+        cmd = os.path.join(javaDir, 'java') + ' -jar ' + os.path.join(hammockDir, 'Hammock.jar') + ' full -i {} -d {} -t {} --tmp {}'.format(*[inputFasta, outputDir, threads, tmpDir])
+        # Run Hammock
+        run_hammock = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
+        hammout, hammerr = run_hammock.communicate()
+        # Ensure Hammock finished successfully [it writes everything to stderr, so it's difficult for us to, at a glance, figure out if any errors actually occurred; we need to parse stderr specifically
+        checks = [False, False, False]
+        for line in hammerr.decode("utf-8").split('\n'):
+                if 'final_clusters' in line:
+                        checks[0] = True
+                elif 'Final system KLD over match' in line:
+                        checks[1] = True
+                elif 'Final system KLD over all MSA' in line:
+                        checks[2] = True
+        if not checks == [True, True, True]:
+                print(checks)
+                raise Exception('Hammock error text below' + str(hammerr.decode("utf-8")))
+
+def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to the fasta file used for running Hammock; we can pair sequence IDs back up by using Hammock's original_order.tsv file
+        # Set up
+        from Bio import SeqIO
+        groupDict = {}
+        indexDict = {}          # We'll use this to store number pairs; Hammock doesn't give cluster numbers starting from 0, but we want this format for later, so we can relabel the clusters here
+        ongoingCount = 0        # This will be our cluster number iterator
+        # Load the original fasta as a record generator
+        records = SeqIO.parse(open(originalFasta, 'r'), 'fasta')
+        # Read through Hammock's output file
+        with open(hammockOutFile, 'r') as fileIn:
+                fileIn.readline()       # Skip the header line
+                for line in fileIn:
+                        sl = line.split('\t')
+                        # Find out the sequence ID for this sequence
+                        for record in records:
+                                seqid = record.description
+                                break
+                        # Skip unclustered sequences
+                        if sl[0] == 'NA':
+                                continue
+                        # Find out the cluster ID for this sequence
+                        if sl[0] in indexDict:
+                                clustNum = indexDict[sl[0]]
+                        else:
+                                clustNum = ongoingCount
+                                indexDict[sl[0]] = clustNum
+                                ongoingCount += 1
+                        # Add to our groupDict
+                        if clustNum in groupDict:
+                                groupDict[clustNum].append(seqid)
+                        else:
+                                groupDict[clustNum] = [seqid]
+        return groupDict
