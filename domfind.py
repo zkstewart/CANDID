@@ -143,7 +143,7 @@ def coord_cutter(fastaFile, coordDict, outputFileName):
                                         currSeq = currSeq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + currSeq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
                                 outFile.write('>' + seqName + '\n' + currSeq + '\n')
 
-def fasta_domain_extract(domDict, fastaFile, outputFileName):
+def fasta_domain_extract(coordDict, fastaFile, outputFileName):
         # Setup
         from Bio import SeqIO
         # Load input file
@@ -151,14 +151,14 @@ def fasta_domain_extract(domDict, fastaFile, outputFileName):
         # Produce output
         with open(outputFileName, 'w') as fileOut:
                 for record in records:
-                        if record.description in domDict:
+                        if record.description in coordDict:
                                 seqid = record.description
-                        elif record.id in domDict:  # POSSIBLE PROBLEM: May need to be more strict with ID parsing consistency especially since MMseqs2 does change sequence IDs...
+                        elif record.id in coordDict:    # POSSIBLE PROBLEM: May need to be more strict with ID parsing consistency especially since MMseqs2 does change sequence IDs...
                                 seqid = record.id
                         else:
                                 continue
                         seq = str(record.seq)
-                        ranges = domDict[seqid]
+                        ranges = coordDict[seqid]
                         for i in range(len(ranges)):
                                 tmpDomain = seq[ranges[i][0]-1:ranges[i][1]]
                                 fileOut.write('>' + record.description + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]) + '-' + str(ranges[i][1]) + '\n' + tmpDomain + '\n')

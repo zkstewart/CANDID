@@ -1,167 +1,3 @@
-def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
-        # Set up
-        from alfpy import word_pattern, word_vector, word_distance
-        from alfpy.utils import seqrecords, distmatrix
-        from alfpy.utils.data import seqcontent
-        # Read in unclustered domains file
-        unclustDoms = open(fastaFile)
-        records = seqrecords.read_fasta(unclustDoms)
-        unclustDoms.close()
-        # Extract details from records using alfpy-provided functions
-        seqList = records.seq_list
-        lengthList = records.length_list
-        idList = records.id_list
-        # Optional reduction of protein alphabet
-        if str(reduceNum) == '15':
-                murphy_15_tab = {"L":"L","V":"L","I":"L","M":"L","C":"C","A":"A","G":"G","S":"S","T":"T","P":"P","F":"F","Y":"F","W":"W","E":"E","D":"D","N":"N","Q":"Q","K":"K","R":"K","H":"H"}
-                for i in range(len(seqList)):
-                        newseq = ''
-                        for letter in seqList[i]:
-                                newseq += murphy_15_tab[letter]
-                        seqList[i] = newseq
-        elif str(reduceNum) == '11':
-                eleven_tab = seqcontent.get_reduced_alphabet('protein')
-                for i in range(len(seqList)):
-                        newseq = ''
-                        for letter in seqList[i]:
-                                if letter in eleven_tab:
-                                        newseq += eleven_tab[letter]
-                                else:
-                                        newseq += letter
-                        seqList[i] = newseq
-        elif reduceNum != 'n':
-                print('I didn\'t recognise the reduceNum value provided to this function. It should be None, 11, or 15.')
-                print('I\'m just going to treat this as None... if you don\'t want this behaviour, fix your input.')
-        ### TEST
-        # Compute distance matrix of choice
-        if alfAlgorithm == 'google':
-                # Calc for word_size = 2
-                p = word_pattern.create(seqList, word_size=2)
-                counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, 'google')
-                matrix2 = distmatrix.create(idList, dist)
-                # Now 1
-                p = word_pattern.create(seqList, word_size=1)
-                counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, 'google')
-                matrix1 = distmatrix.create(idList, dist)
-        elif alfAlgorithm == 'canberra':
-                # 2
-                p = word_pattern.create(seqList, word_size=2)
-                weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
-                counts = word_vector.CountsWeight(lengthList, p, weightmodel)
-                dist = word_distance.Distance(counts, 'canberra')
-                matrix2 = distmatrix.create(idList, dist)
-                # 1
-                p = word_pattern.create(seqList, word_size=1)
-                weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
-                counts = word_vector.CountsWeight(lengthList, p, weightmodel)
-                dist = word_distance.Distance(counts, 'canberra')
-                matrix1 = distmatrix.create(idList, dist)
-        else:
-                # 2
-                p = word_pattern.create(seqList, word_size=2)
-                counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, 'braycurtis')
-                matrix2 = distmatrix.create(idList, dist)
-                # 1
-                p = word_pattern.create(seqList, word_size=1)
-                counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, 'braycurtis')
-                matrix1 = distmatrix.create(idList, dist)
-        ### TESTING ###
-        #import numpy as np
-        #matrix2 = np.array(matrix2)
-        #np.set_printoptions(threshold=np.inf)
-        #matrix2.tofile('dataset.csv', sep=',', format="%s")
-        #text = pyperclip.paste()
-        #table = text.split(']\r\n [ ')
-        #for i in range(len(table)):
-        #        table[i] = table[i].replace('[', '')
-        #        table[i] = table[i].replace(']', '')
-        #for line in table:
-        #        sl = line.split()
-        #        out.append('\t'.join(sl))
-        #pyperclip.copy('\r\n'.join(out))
-        #print(idList)
-        #quit()
-        ### TESTING ###
-        # Return value
-        return matrix1, matrix2, idList
-
-def cluster_hdb(leaf, singleclust, minsize, minsample, matrix1, matrix2, idList, rejects_list):
-        # Set up
-        import hdbscan
-        group_dict = {}
-        # Run clustering algorithm
-        if leaf and singleclust:
-                clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(minsize), min_samples = int(minsample), allow_single_cluster = True)
-        elif leaf and not singleclust:
-                clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(minsize), min_samples = int(minsample))
-        elif not leaf and singleclust:
-                clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(minsize), min_samples = int(minsample), allow_single_cluster = True)   
-        #elif args['robust'] == 'y':
-        #        #test robust single linkage
-        #        clusterer = hdbscan.robust_single_linkage_.RobustSingleLinkage(metric='precomputed', gamma = min_cluster_size = int(args['minsize']))
-        else:
-                clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(minsize), min_samples = int(minsample))
-        #clusterer.fit(matrix2.data)         # We look at matrix2 (or word_size == 2) first since it should, theoretically, find more 'similar' groups better than a word_size of 1
-        clusterer.fit(matrix1.data) ## TESTING WORD SIZE 1 FIRST
-        # Pull out domain groups
-        clust_groups = clusterer.labels_
-        clust_probs = clusterer.probabilities_
-        print(clust_probs)
-        # Sort groups
-        for i in range(len(idList)):
-                if clust_groups[i] != -1:
-                        if clust_groups[i] not in group_dict:
-                                group_dict[clust_groups[i]] = [idList[i]]
-                        else:
-                                group_dict[clust_groups[i]].append(idList[i])
-                else:
-                        rejects_list.append(idList[i])
-        #### TESTING ####
-        # Look through the results of the matrix1 (or word_size == 1) for any groups not found for word_size == 2
-        #if args['leaf'] == 'y' and args['singleclust'] == 'y':
-        #        clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)
-        #elif args['leaf'] == 'y' and args['singleclust'] == 'n':
-        #        clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = 'leaf', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
-        #elif args['leaf'] == 'n' and args['singleclust'] == 'y':
-        #        clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']), allow_single_cluster = True)   
-        #else:
-        #        clusterer = hdbscan.HDBSCAN(metric='precomputed', min_cluster_size = int(args['minsize']), min_samples = int(args['minsample']))
-        #clusterer.fit(matrix2.data)         ## TESTING WORD SIZE 2 SECOND
-        #new_groups = clusterer.labels_
-        # Format new group into a dictionary
-        #new_dict = {}
-        #for i in range(len(idList)):
-        #        if new_groups[i] != -1:
-        #                if new_groups[i] not in new_dict:
-        #                        new_dict[new_groups[i]] = [idList[i]]
-        #                else:
-        #                        new_dict[new_groups[i]].append(idList[i])
-        # Look for groups not found in previous clustering
-        #oldvals = []
-        #ongoingCount = 0
-        #oldlen = len(group_dict)
-        #for val in group_dict.values():
-        #        oldvals += val
-        #skip = 'n'
-        #for key, value in new_dict.items():
-        #        for val in value:
-        #                if val in oldvals:
-        #                        skip = 'y'
-        #                        break
-        #        if skip == 'y':
-        #                skip = 'n'
-        #                continue
-        #        else:
-        #                group_dict[ongoingCount + oldlen] = value
-        #                ongoingCount += 1
-        #                for val in value:
-        #                        del rejects_list[rejects_list.index(val)]           # Now that these are no longer rejects, we delete them from our rejects_list
-        return group_dict, rejects_list
-
 def tmpdir_setup(outputDir, tmpdirName):
         # Set up
         import os
@@ -274,6 +110,66 @@ def cluster_hmms(msaDir, hmmer3dir, concatName):
         hmmout, hmmerr = run_hmmpress.communicate()
         if hmmerr.decode("utf-8") != '':
                 raise Exception('hmmpress error text below' + str(hmmerr.decode("utf-8")))
+
+def coord_dict_compare(currentCoordDict, prevCoordDict):
+        # Set up
+        import copy
+        currentCoordDict = copy.deepcopy(currentCoordDict)
+        prevCoordDict = copy.deepcopy(prevCoordDict)
+        # Comparison 1: same keys?
+        if set(currentCoordDict.keys()) != set(prevCoordDict.keys()):
+                return True     # This function asks the question "Did anything change?" - if this "if" statement is True, then the answer to this question is True
+        # Comparison 2: same number of values associated with keys?
+        for key in currentCoordDict.keys():
+                currentVals = currentCoordDict[key]
+                prevVals = prevCoordDict[key]
+                if len(currentVals) != len(prevVals):
+                        return True
+                # Comparison 3: very similar coords associated with keys?
+                mergedCoords = coord_lists_merge([currentVals, prevVals], 5)    # 5bp overlap means that minor alterations to coordinates won't matter, but substantial ones will
+                if len(mergedCoords) != len(currentVals):
+                        return True
+        # If we get to here, nothing much changed
+        return False
+
+def coord_lists_merge(coordLists, offsetNum):   # offsetNum lets us specify increased stringency for overlaps; this is useful if we don't want 1 coord overlaps to cause merging
+        # Pairwise coord list merging until a single list remains
+        while len(coordLists) > 1:      # This is our exit condition; we merge coord lists until we have one remaining
+                # Merge two lists together
+                for x in range(len(coordLists[0])-1,-1,-1):
+                        pair1 = coordLists[0][x]
+                        merged = False
+                        for y in range(len(coordLists[1])-1,-1,-1):
+                                pair2 = coordLists[1][y]
+                                # Detect overlap
+                                if pair1[1] >= pair2[0] + offsetNum and pair2[1] >= pair1[0] + offsetNum:
+                                        # Merge coords
+                                        start = min([pair1[0], pair2[0]])
+                                        end = max([pair1[1], pair2[1]])
+                                        coordLists[1][y] = [start, end]
+                                        merged = True
+                        # If we couldn't merge the coord from [0] i.e., pair1, add it to [1]
+                        if merged == False:
+                                coordLists[1].append(pair1)
+                # Delete the first list after it has been fully merged
+                del coordLists[0]
+        # Process the remaining list to merge self-overlaps
+        coordList = coordLists[0]       # We need to extract the last list entry out of the containing list since it's not needed anymore
+        for x in range(len(coordList)-1,-1,-1):
+                if x != 0:
+                        pair1 = coordList[x]
+                        pair2 = coordList[x-1]
+                        # Detect overlap
+                        if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                # Merge coords
+                                start = min([pair1[0], pair2[0]])
+                                end = max([pair1[1], pair2[1]])
+                                coordList[x-1] = [start, end]
+                                # Cull entry
+                                del coordList[x]
+        # Sort coordList and return
+        coordList.sort()
+        return coordList
 
 def hmmer_grow(domDict, unclustFasta, outputBase, group_dict, rejects_list, iterate):   # Outputbase refers to the path generated in the domain_finder script
         # Set up
@@ -433,176 +329,6 @@ def hmmer_grow(domDict, unclustFasta, outputBase, group_dict, rejects_list, iter
         # Return value to dictate whether we continue the looping
         return iterate
 
-def parse_joiner(args, outdir, basename, group_dict):
-        import os, re
-        from itertools import groupby
-        from Bio import SeqIO
-        from collections import Counter
-        print('Performing domain boundary cleanup...')
-        iterate2 = 'y'
-        localiterate = 'y'
-        ##### PARSING HMMERSEARCH
-        align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
-        hmmer_file = open(os.path.join(align_out_dir, 'tmp_hmmer.results'))
-        hmm_reg = re.compile(r'(Domain_\d{0,10})_align')
-        grouper = lambda x: hmm_reg.search(x).group(0) if not x.startswith('#') else x[0]
-        inside_grouper = lambda x: x[0]
-        domdict = {}
-        domlist = []
-        for key, group in groupby(hmmer_file, grouper):
-                if key.startswith('#'): continue
-                group_hits = []
-                for line in group:
-                        split_line = line.split()
-                        seqid = split_line[0]
-                        seqlen = split_line[2]
-                        dstart = int(split_line[17])
-                        dend = int(split_line[18])
-                        evalue = float(split_line[12])
-                        if evalue <= float(args['hmmevalnov']) and dend - dstart + 1 > int(args['cleanAA']):
-                                group_hits.append([seqid, dstart, dend, seqlen])
-                # Skip processing any groups that have no significant hmmer hits [should be impossible, but who knows?]
-                if len(group_hits) == 0:
-                        continue
-                # Loop through the accepted hits for this group and join any regions that require it
-                updated_hits = []
-                if len(group_hits) == 1:
-                        updated_hits = group_hits
-                else:
-                        for seqid, regions in groupby(group_hits, inside_grouper):
-                                regions = list(regions)
-                                if len(regions) == 1:
-                                        updated_hits += regions
-                                        continue
-                                regions.sort(key = lambda x: x[1])  # If we get to here, then we know we have multiple domain hits to the same sequence
-                                while True:
-                                        overlap = 'n'
-                                        for i in range(0, len(regions)-1):
-                                                if regions[i+1][1] < regions[i][2] + int(args['cleanAA']):
-                                                        regions[i+1] = [regions[i+1][0], regions[i][1], regions[i+1][2], regions[i+1][3]]
-                                                        del regions[i]
-                                                        overlap = 'y'
-                                                        break
-                                                else:
-                                                        #tmp.append(regions[i])
-                                                        overlap = 'n'
-                                                        continue
-                                        if overlap == 'n':
-                                                break
-                                updated_hits += regions
-
-                # Join overlapping domains
-                for entry in updated_hits:
-                        seqid = entry[0]
-                        domlist.append([key] + entry)
-                        if seqid in domdict:
-                                domdict[seqid].append([key] + entry[1:])
-                        else:
-                                domdict[seqid] = [[key] + entry[1:]]
-        # Sort domlist
-        domlist.sort()
-        #### FIND DOMAIN LENGTHS
-        align_out_dir = os.path.join(os.getcwd(), outdir, 'tmp_alignments')
-        msas = os.listdir(align_out_dir)
-        dom_lengths = {}
-        for msa in msas:
-                if not msa.endswith('.fasta'):
-                        continue
-                records = SeqIO.parse(open(os.path.join(align_out_dir, msa), 'rU'), 'fasta')
-                for record in records:
-                        dom_lengths[msa.split('.')[0]] = len(str(record.seq))
-        #### FIND CO-OCCURRING DOMAINS
-        grouper = lambda x: x[0]
-        domjoin = []
-        vague_doms = [] # We'll make an output file from this listing domains that look like they might overlap, but don't overlap a majority of the time
-        for key, group in groupby(domlist, grouper):        # key looks something like 'Domain_1_align'
-                if localiterate == 'n': break
-                domjoin = []
-                nonejoin = []
-                group = list(group)
-                for val in group:           # val looks something like ['Domain_1_align', 'Seq1', 76, 154]
-                        seqdoms = domdict[val[1]]   # seqdoms looks something like [['Domain_1_align', 76, 154], ['Domain_2_align', 167, 203]] after sorting
-                        seqdoms.sort(key = lambda x: x[1])
-                        # SINGLE DOMAIN: Count the length of the leftover sequence and add it as a 'NONE' hit in domjoin
-                        if len(seqdoms) == 1:
-                                leftover = int(seqdoms[0][3]) - int(seqdoms[0][2])
-                                nonejoin.append(['None',leftover])
-                                continue
-                        # MULTIDOMAIN [LAST DOMAIN]: Count the length of the leftover sequence and add it as a 'NONE' hit in domjoin [we don't add a 'continue' at the end of this loop, since it's possible this domain occurs twice in this sequence]
-                        if seqdoms[-1][0] == key:
-                                leftover = int(seqdoms[-1][3]) - int(seqdoms[-1][2])
-                                nonejoin.append(['None',leftover])
-                        # MULTIDOMAIN: Look to see if the current key/domain is followed by other domains
-                        for i in range(0, len(seqdoms)-1):
-                                if seqdoms[i][0] == key:
-                                        if int(seqdoms[i+1][1]) < int(seqdoms[i][2]) + int(args['cleanAA']):
-                                                domjoin.append(seqdoms[i+1][0])
-                                        else:
-                                                nonejoin.append(['None',999])          # Make the leftover value very large to make it clear that nothing follows this domain (in this instance)
-                # Tally votes, and see if any domain regions should be joined together
-                if len(domjoin) == 0:
-                        # This domain doesn't overlap any other domains
-                        continue
-                else:
-                        # Tally co-occurrences
-                        commonest_dom = Counter(domjoin).most_common(1)[0][0]
-                        commonest_count = Counter(domjoin).most_common(1)[0][1]
-                        percentage = commonest_count / sum(Counter(domjoin).values())
-                        if percentage < args['cooccur']:
-                                # This domain doesn't overlap other domains frequently enough
-                                continue
-                        # Update tally using 'None' counts
-                        commonest_len = dom_lengths[commonest_dom]
-                        nonetally = 0
-                        for none in nonejoin:
-                                if int(none[1]) > commonest_len + args['cleanAA']:  # i.e., if the leftover sequence length is long enough to allow for a gap (cleanAA=30 by default) + the full domain length (commonest_len), then we assume it does not follow
-                                        nonetally += 1
-                        percentage = commonest_count / sum(Counter(domjoin).values()) + nonetally
-                        if percentage < args['cooccur']:
-                                # This domain doesn't overlap other domains frequently enough
-                                continue
-                        # If we get to here, then we assume that these two domains should overlap
-                        for val in group:           # We begin by re-looping through all the sequences that contain our current domain of interest (our 'key'), and joining the lengths of the 'key' + the overlapping domain ('commonest')
-                                seqdoms = domdict[val[1]]
-                                updated_seqdom = []
-                                for i in range(len(seqdoms)):
-                                        if seqdoms[i][0] == commonest_dom:
-                                                continue
-                                        if seqdoms[i][0] != key:
-                                                updated_seqdom.append(seqdoms[i])
-                                        elif i != len(seqdoms)-1:   # i.e., if seqdoms[i][0] == key and this isn't the last entry, then we know that the next domain is our commonest_dom
-                                                joined_region = [key, seqdoms[i][1], seqdoms[i+1][2], seqdoms[i+1][3]]
-                                                updated_seqdom.append(joined_region)
-                                        else:                                           # i.e., if we get to here, seqdoms[i] == key but it is also the last domain, so we know nothing follows after it
-                                                updated_seqdom.append(seqdoms[i])
-
-                                domdict[val[1]] = updated_seqdom
-
-                        # Since we've joined domain groups, we now want to re-do the whole process of clustering, hmmer prediction, and joining
-                        print('Joined two domain regions together, reiterating the clustering process...')
-                        localiterate = 'n'
-                        break
-
-        # Update the unclustered_domains.fasta file
-        records = SeqIO.to_dict(SeqIO.parse(open(os.path.join(os.getcwd(), outdir, basename + '_cdhit.fasta'), 'rU'), 'fasta'))
-        outlist = []
-        for key2, value2 in domdict.items():
-                seq = str(records[key2].seq)
-                ongoingCount = 0
-                for region in value2:
-                        ongoingCount += 1
-                        seqregion = seq[region[1]-1:region[2]]
-                        outlist.append('>' + key2 + '_Domain_' + str(ongoingCount) + '_' + str(region[1]) + '-' + str(region[2]) + '\n' + seqregion)
-        outfile = open(os.path.join(os.getcwd(), outdir, basename + '_unclustered_domains.fasta'), 'w')
-        outfile.write('\n'.join(outlist))
-        outfile.close()
-        
-        # If we ever get to this point in the script and localiterate is still == 'y', then we know that there were no overlaps at all, and we have reached convergence
-        if localiterate == 'y':
-                print('No more domain regions overlap, beginning the final clustering process...')
-                iterate2 = 'n'
-        return iterate2
-
 def thread_file_name_gen(prefix, threadNum):
         import os
         ongoingCount = 0
@@ -646,6 +372,7 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
         # Set up
         from Bio import SeqIO
         groupDict = {}
+        unclustDict = {0: []}
         indexDict = {}          # We'll use this to store number pairs; Hammock doesn't give cluster numbers starting from 0, but we want this format for later, so we can relabel the clusters here
         ongoingCount = 0        # This will be our cluster number iterator
         # Load the original fasta as a record generator
@@ -661,6 +388,7 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
                                 break
                         # Skip unclustered sequences
                         if sl[0] == 'NA':
+                                unclustDict[0].append(seqid)
                                 continue
                         # Find out the cluster ID for this sequence
                         if sl[0] in indexDict:
@@ -674,4 +402,8 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
                                 groupDict[clustNum].append(seqid)
                         else:
                                 groupDict[clustNum] = [seqid]
-        return groupDict
+        # Return our clusters if identified; otherwise, return the unclustDict object [not finding any clusters means there aren't any, or there is only 1]
+        if groupDict != {}:
+                return groupDict
+        else:
+                return unclustDict

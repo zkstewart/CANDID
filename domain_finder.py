@@ -1,7 +1,7 @@
 #! python3
 
 # Import external packages
-import argparse, os, time, shutil
+import argparse, os, time, shutil, copy
 # Import classes from included script folder
 from domfind import benchparse
 from domfind import domtblout_handling, domfind, domclust
@@ -580,18 +580,19 @@ if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
         if unprocessedArrays == {}:
                 print('No potential novel domain regions were found from MMseqs2. Program end.')
                 quit()
-        domDict = domfind.parsemms2_peaks(unprocessedArrays)
-        domfind.fasta_domain_extract(domDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+        coordDict = domfind.parsemms2_peaks(unprocessedArrays)
+        domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
 
 #### DOMAIN CLUSTERING
-rejects_list = []
-current_doms = ''
+prevGroupDict = {}
 iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
 verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
-
-if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
-        while iterate < 2 and loopCount <= args.numiters:             # This loop works by feeding iterate 0 into the hmmer_grow function. If no new region is found, iterate becomes 1. This is then fed back into hmmer_grow, and if there is still no new regions found, iterate becomes 2 and the while loop ends.
+if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
+        while iterate < 2:      # Main exit condition; if we iterate twice without finding something new, we exit the loop
+                # Optional exit condition based on loop count
+                if loopCount > args.numiters and args.numiters != 0:
+                        break
                 # Hammock clustering
                 domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
                 groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
@@ -602,16 +603,27 @@ if not os.path.isfile(outputBase + '_clustered_domains.fasta'):
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
                 domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
-                domDict = domtblout_handling.hmmer_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, True)        # True here tells the function to pull out the basename for these domains since they'll likely have the full path to the file
-                # Cluster growth step
-                iterate = domclust.hmmer_grow(domDict, outputBase + '_unclustered_domains.fasta', outputBase, groupDict, rejects_list, iterate)
-                if args.numiters != 0:       # This prevents the numiters exit condition from activating
-                        loopCount += 1
-        # Provide informative loop exit text
-        if loopCount > args.numiters:
-                print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
-        else:
-                print('Program finished successfully after no new domain regions were able to be found.')
+                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov)
+                # Compare clusters to see if anything changed
+                if loopCount != 0:
+                        changes = domclust.coord_dict_compare(coordDict, prevCoordDict)
+                        if changes == True:
+                                iterate = 0
+                                print('Something changed')
+                        else:
+                                iterate += 1
+                                print('Nothing changed')
+                prevCoordDict = copy.deepcopy(coordDict)        # Hold onto this for comparison
+                # Extract new unclustered domains
+                domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+                loopCount += 1
+
+# Provide informative loop exit text
+print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
+if loopCount > args.numiters:
+        print('This occurred after the maximum iteration limit was reached.')
+else:
+        print('This occurred after no new domain regions were able to be found.')
 
 #### FINAL RESULTS PRESENTATION
 verbose_print(args.verbose, '# Step 9/9: Final output tidying')

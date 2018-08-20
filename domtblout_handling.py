@@ -432,7 +432,7 @@ def hmmer_parse(domtbloutFile, evalueCutoff):
         return domDict
 
 ## Parsed domtblout re-parsing
-def hmmer_reparse(parsedFile, evalueCutoff, baseExtract):
+def hmmer_full_reparse(parsedFile, evalueCutoff, baseExtract):  # This version of the function will return a list of domain details [DomainName, start, stop, E-value] as values associated with sequence IDs as keys
         # Set up
         import os
         domDict = {}                            # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
@@ -465,6 +465,33 @@ def hmmer_reparse(parsedFile, evalueCutoff, baseExtract):
                         # Add into domain dictionary
                         domDict[sl[0]] = domList
         return domDict
+
+def hmmer_coord_reparse(parsedFile, evalueCutoff):      # This version of the function will return a list of coords as values associated with sequence IDs as keys
+        # Set up
+        coordDict = {}                            # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
+        # Main function
+        with open(parsedFile, 'r') as fileIn:
+                for line in fileIn:
+                        # Skip unnecessary lines
+                        if line.startswith('#') or line == '' or line == '\n' or line == '\r\n':
+                                continue
+                        # Extract entries from lines
+                        sl = line.rstrip('\r\n').split('\t')
+                        domList = []
+                        for entry in sl[1:]:
+                                # Split entries up into their individual information characteristics
+                                info = entry.split(', ')        # This should be a list like [domainID, startPosition, endPosition, E-value]
+                                # Remove the formatting characters that are only there for visual inspection purposes
+                                for i in range(len(info)):
+                                        info[i] = info[i].strip("'[]")
+                                # Skip entries if evalue is not significant
+                                if float(info[3]) > float(evalueCutoff):
+                                        continue
+                                # Store any good results
+                                domList.append([int(info[1]), int(info[2])])
+                        # Add into domain dictionary
+                        coordDict[sl[0]] = domList
+        return coordDict
 
 ## Output functions
 def output_func(inputDict, outputFileName):
