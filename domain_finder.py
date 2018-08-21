@@ -584,20 +584,38 @@ if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
         domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
 
 #### DOMAIN CLUSTERING
+verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
+
+# Set up for main loop
+tmpDir = os.path.join(args.outdir, 'tmp_alignments')
+clustering = 'HDBSCAN'  # TESTING: If I want to provide both options, I can modify the argument parsing a bit
 prevGroupDict = {}
 iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
-verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
+noClust = False
+enteredMain = False
+# Main loop
 if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
+        enteredMain = True      # This lets us recognise if we actually entered this loop; if we didn't, all the results have been generated so we won't perform the shutil operations below
         while iterate < 2:      # Main exit condition; if we iterate twice without finding something new, we exit the loop
                 # Optional exit condition based on loop count
                 if loopCount > args.numiters and args.numiters != 0:
                         break
-                # Hammock clustering
-                domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
-                groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
+                # Clustering step
+                if clustering == 'Hammock':
+                        # Hammock clustering
+                        domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
+                        groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
+                else:
+                        # HDBSCAN clustering
+                        matrix1, matrix2, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, 'google')
+                        groupDict = domclust.cluster_hdb(False, False, 2, 1, matrix1, matrix2, idList)  # TESTING: Params are hard coded
+                if groupDict == None:
+                        print('No clusters were identifed; program will exit now.')
+                        noClust = True
+                        break
                 # Alignment steps
-                tmpDir = domclust.tmpdir_setup(args.outdir, 'tmp_alignments')
+                domclust.tmpdir_setup(tmpDir)
                 domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, args.threads, groupDict) # We choose not to use the alignments Hammock presents since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
@@ -618,20 +636,20 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
                 loopCount += 1
 
-# Provide informative loop exit text
-print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
-if loopCount > args.numiters:
-        print('This occurred after the maximum iteration limit was reached.')
-else:
-        print('This occurred after no new domain regions were able to be found.')
-
-#### FINAL RESULTS PRESENTATION
-verbose_print(args.verbose, '# Step 9/9: Final output tidying')
-shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_' + fastaBase + '.domtblout'))
-shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
-verbose_print(args.verbose, 'Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
-verbose_print(args.verbose, 'Individual domain alignments can be found in "' + tmpDir + '".')
-
+if noClust == False and enteredMain == True:
+        # Provide informative loop exit text
+        print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
+        if loopCount > args.numiters and args.numiters != 0:
+                print('This occurred after the maximum iteration limit was reached.')
+        else:
+                print('This occurred after no new domain regions were able to be found.')
+        
+        #### FINAL RESULTS PRESENTATION
+        verbose_print(args.verbose, '# Step 9/9: Final output tidying')
+        shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_' + fastaBase + '.domtblout'))
+        shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
+        verbose_print(args.verbose, 'Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
+        verbose_print(args.verbose, 'Individual domain alignments can be found in "' + tmpDir + '".')
+        
 verbose_print(args.verbose, '### PROGRAM END ###')
 verbose_print(args.verbose, time.ctime())
-### 

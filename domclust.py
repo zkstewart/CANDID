@@ -1,8 +1,118 @@
-def tmpdir_setup(outputDir, tmpdirName):
+def protein_alphabet_reduce(proteinList, reduceNum):
+        # Set up
+        elevenLetter = {'E':'D','L':'I','M':'I','Q':'K','R':'K','T':'S','V':'I','W':'F','Y':'F'}
+        fifteenLetter = {"L":"L","V":"L","I":"L","M":"L","C":"C","A":"A","G":"G","S":"S","T":"T","P":"P","F":"F","Y":"F","W":"W","E":"E","D":"D","N":"N","Q":"Q","K":"K","R":"K","H":"H"}
+        # Ensure reduceNum is sensible and hold onto the correct reduce dict OR return our unmodified protein list
+        if reduceNum == None or reduceNum == 'n' or type(reduceNum) == bool:
+                return proteinList      # No modification is necessary
+        elif int(reduceNum) == 11:
+                reduceDict = elevenLetter
+        elif int(reduceNum) == 15:
+                reduceDict = fifteenLetter
+        else:
+                print('I didn\'t recognise the reduceNum value provided to the protein_alphabet_reduce function. It should be None, \'n\', 11, or 15.')
+                print('I\'m just going to treat this as None... if you don\'t want this behaviour, fix your input.')
+                return proteinList      # No modification is necessary
+        # Ensure our proteinList is a list; if a single str is provided, make it a list (then return the str back from the function later)
+        listAtEnd = True
+        if type(proteinList) == str:
+                proteinList = [proteinList]
+                listAtEnd = False
+        # Main function
+        for i in range(len(proteinList)):
+                newseq = ''
+                for letter in proteinList[i]:
+                        if letter in reduceDict:
+                                newseq += reduceDict[letter]
+                        else:
+                                newseq += letter
+                proteinList[i] = newseq
+        # Return our modified list
+        if listAtEnd == False:
+                proteinList = proteinList[0]
+        return proteinList
+
+def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
+        # Set up
+        from alfpy import word_pattern, word_vector, word_distance
+        from alfpy.utils import seqrecords, distmatrix
+        from alfpy.utils.data import seqcontent
+        # Read in unclustered domains file
+        unclustDoms = open(fastaFile)
+        records = seqrecords.read_fasta(unclustDoms)
+        unclustDoms.close()
+        # Extract details from records using alfpy-provided functions
+        seqList = records.seq_list
+        lengthList = records.length_list
+        idList = records.id_list
+        # Optional reduction of protein alphabet
+        seqList = protein_alphabet_reduce(seqList, reduceNum)
+        # Compute distance matrix for word sizes
+        matrix = []
+        for num in [2, 1]:      ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
+                p = word_pattern.create(seqList, word_size=num)
+                if alfAlgorithm == 'canberra':
+                        weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
+                        counts = word_vector.CountsWeight(lengthList, p, weightmodel)
+                else:
+                        counts = word_vector.Counts(lengthList, p)
+                dist = word_distance.Distance(counts, alfAlgorithm)
+                matrix.append(distmatrix.create(idList, dist))
+        # Return value
+        return matrix[0], matrix[1], idList
+
+def cluster_hdb(leaf, singleClust, minSize, minSample, matrix1, matrix2, idList):
+        # Set up
+        import hdbscan
+        groupDicts = []
+        # Convert our input values into relevant parameters
+        if leaf == True:
+                clustSelect = 'leaf'
+        else:
+                clustSelect = 'eom'     # This is the default HDBSCAN clustering method
+        if singleClust == True:
+                allowSingle = True
+        else:
+                allowSingle = False
+        # Run clustering algorithm for both word size matrices
+        for matrix in [matrix1, matrix2]:       # TESTING WORD SIZE 1 FIRST
+                clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = clustSelect, min_cluster_size = int(minSize), min_samples = int(minSample), allow_single_cluster = allowSingle)
+                clusterer.fit(matrix.data) 
+                # Pull out domain groups
+                clust_groups = clusterer.labels_
+                #clust_probs = clusterer.probabilities_
+                #print(clust_probs)
+                # Sort groups
+                groupDict = {}
+                for i in range(len(idList)):
+                        if clust_groups[i] != -1:
+                                if clust_groups[i] not in groupDict:
+                                        groupDict[clust_groups[i]] = [idList[i]]
+                                else:
+                                        groupDict[clust_groups[i]].append(idList[i])
+                groupDicts.append(groupDict)
+        # Merge word size matrices together
+        oldVals = []
+        ongoingCount = 0
+        for val in groupDicts[0].values():
+                oldVals += val
+        for key, value in groupDicts[1].items():
+                skip = False
+                for val in value:
+                        if val in oldVals:
+                                skip = True
+                                break
+                if skip == True:
+                        continue
+                else:
+                        groupDicts[0][ongoingCount + len(groupDicts[0])] = value
+                        ongoingCount += 1
+        return groupDicts[0]
+
+def tmpdir_setup(tmpDir):
         # Set up
         import os
         # Main function
-        tmpDir = os.path.join(os.path.abspath(outputDir), tmpdirName)
         if os.path.isdir(tmpDir):
                 for file in os.listdir(tmpDir):
                         filePath = os.path.join(tmpDir, file)
@@ -13,7 +123,6 @@ def tmpdir_setup(outputDir, tmpdirName):
                                 print(e)
         else:
                 os.mkdir(tmpDir)
-        return tmpDir
 
 def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
         # Set up
@@ -373,9 +482,6 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
         from Bio import SeqIO
         groupDict = {}
         unclustDict = {0: []}
-        indexDict = {}          # We'll use this to store number pairs; Hammock doesn't give cluster numbers starting from 0, but we want this format for later, so we can relabel the clusters here
-        ongoingCount = 0        # This will be our cluster number iterator
-        # Load the original fasta as a record generator
         records = SeqIO.parse(open(originalFasta, 'r'), 'fasta')
         # Read through Hammock's output file
         with open(hammockOutFile, 'r') as fileIn:
@@ -390,20 +496,29 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
                         if sl[0] == 'NA':
                                 unclustDict[0].append(seqid)
                                 continue
-                        # Find out the cluster ID for this sequence
-                        if sl[0] in indexDict:
-                                clustNum = indexDict[sl[0]]
-                        else:
-                                clustNum = ongoingCount
-                                indexDict[sl[0]] = clustNum
-                                ongoingCount += 1
                         # Add to our groupDict
-                        if clustNum in groupDict:
-                                groupDict[clustNum].append(seqid)
+                        if sl[0] in groupDict:
+                                groupDict[sl[0]].append(seqid)
                         else:
-                                groupDict[clustNum] = [seqid]
+                                groupDict[sl[0]] = [seqid]
+        # Cull single-entry clusters and rename clusters
+        ongoingCount = 0                        # This will be our cluster number iterator
+        dictKeys = list(groupDict.keys())
+        originallyEmpty = True
+        for key in dictKeys:
+                originallyEmpty = False         # This lets us assess whether our groupDict was always empty; if we enter this loop and then groupDict == {}, we know that we deleted a cluster
+                if len(groupDict[key]) == 1:    # This is useful since, if Hammock gives all NAs for clusters, it probably means it's a single cluster; if it wasn't all NA's, then there probably isn't a cluster at all
+                        del groupDict[key]
+                        continue
+                # Find out the cluster ID for this sequence
+                clustNum = ongoingCount
+                ongoingCount += 1
+                # Rename the dict key
+                groupDict[clustNum] = groupDict.pop(key)
         # Return our clusters if identified; otherwise, return the unclustDict object [not finding any clusters means there aren't any, or there is only 1]
         if groupDict != {}:
                 return groupDict
-        else:
+        elif originallyEmpty == True:
                 return unclustDict
+        else:
+                return None
