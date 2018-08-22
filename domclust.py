@@ -192,6 +192,78 @@ def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
         for process_thread in processing_threads:
                 process_thread.join()
 
+def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
+        '''msaFastaIn is the path to the aligned MSA FASTA file to be trimmed
+        pctTrim refers to the minimum proportion of sequences present in a single column to demarcate the start and end of an alignment
+        minLength refers to the minimum length of a MSA after trimming before we decide to not trim at all; if this value is less than 1, we assume it's a ratio, otherwise it is an absolute length.
+        outType influences whether this function returns a Biopython MSA object ("obj") or an output file ("file")
+        msaFastaOut is only relevant when outType == file; otherwise it will be ignored
+        '''
+        # Set up
+        from Bio import AlignIO
+        from Bio.Seq import Seq
+        from Bio.Alphabet import SingleLetterAlphabet
+        # Ensure outType is sensible
+        if outType.lower() not in ['obj', 'file']:
+                print('msa_trim: This function requires an outType to be specified with a specific format.')
+                print('Your provided value "' + outType + '" should instead be "obj", to return the Biopython MSA object, or "file" to produce an output file which uses the string provided as msaFastaOut.')
+                print('Format this correctly and try again.')
+                quit()
+        if outType.lower() == 'file' and not type(msaFastaOut) == str:
+                print('msa_trim: You specified a file output but did\'nt provide a string for msaFasta out - the file output name.')
+                print('Format this correctly and try again.')
+                quit()
+        # Process minLength and ensure it is sensible
+        try:
+                int(minLength)
+        except:
+                print('msa_trim: minLength must be an integer or capable of conversion to integer.')
+                print('Format this correctly and try again.')
+                quit()
+        if minLength < 0:
+                print('msa_trim: minLength must be greater than 0.')
+                print('Format this correctly and try again.')
+                quit()
+        # Load in fasta file as MSA object
+        msa = AlignIO.read(msaFastaIn, 'fasta')
+        # Loop through aligned columns and find the first position from the 5' end that meets our pctTrim value 
+        for i in range(len(msa[0].seq)):
+                col = msa[:,i]
+                pctBases = 1 - (col.count('-') / len(col))
+                if pctBases <= pctTrim:
+                        continue
+                break
+        # Same but for 3' end
+        for x in range(len(msa[0].seq), 0, -1):
+                col = msa[:,x-1]
+                pctBases = 1 - (col.count('-') / len(col))
+                if pctBases <= pctTrim:
+                        continue
+                break
+        # Check our values to ensure they're sensible
+        if i >= x:
+                print('MSA can\'t be trimmed at this pctTrim value; no columns contain this proportion of sequences!')
+                return msa      # If the user isn't expecting a returned object this should just disappear; if they want a file out, we won't modify it
+        # Compare our MSA length post-trimming to our specified cut-offs to determine whether we're doing anything to this sequence or not
+        seqLen = x - i          # This works out fine in 1-based notation
+        if minLength < 1:
+                ratio = seqLen / len(msa[0])
+                if ratio < minLength:
+                        return msa      # We're not going to make any changes if trimming shortens it too much
+        else:
+                if seqLen < minLength:
+                        return msa      # As above
+        # Trim our MSA object
+        for y in range(len(msa)):       # Don't overwrite i from above! I made this mistake...
+                msa[y].seq = Seq(str(msa[y].seq)[i:x], SingleLetterAlphabet())
+        # Return results either as the MSA object or as an output file
+        if outType.lower() == 'obj':
+                return msa
+        else:
+                with open(msaFastaOut, 'w') as fileOut:
+                        for row in msa:
+                                fileOut.write('>' + row.description + '\n' + str(row.seq) + '\n')
+
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
         import os, subprocess
