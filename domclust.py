@@ -124,13 +124,13 @@ def tmpdir_setup(tmpDir):
         else:
                 os.mkdir(tmpDir)
 
-def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
+def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict):
         # Set up
         import os, threading, math
         from Bio import SeqIO
         from Bio.Align.Applications import MafftCommandline
         # Define functions integral to this one
-        def run_mafft(mafftdir, outputDir, fastaFile, startNum, endNum, thread):
+        def run_mafft(mafftdir, outputDir, prefix, suffix, fastaFile, startNum, endNum, thread):
                 # Set up
                 import platform
                 for i in range(startNum, endNum):
@@ -159,7 +159,7 @@ def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
                                 del stdout[-1]
                         stdout = '\n'.join(stdout)
                         # Create output alignment files
-                        with open(os.path.join(outputDir, 'Domain_' + str(i) + '_align.fasta'), 'w') as fileOut:
+                        with open(os.path.join(outputDir, prefix + str(i) + suffix), 'w') as fileOut:
                                 fileOut.write(stdout)
                         # Clean up temp file
                         os.unlink(tmpName)
@@ -183,7 +183,7 @@ def mafft_align(mafftdir, fastaFile, outputDir, threads, group_dict):
         processing_threads = []
         ongoingCount = 0
         for start, end in chunkPoints:
-                build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, fastaFile, start, end, ongoingCount+1))
+                build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, prefix, suffix, fastaFile, start, end, ongoingCount+1))
                 processing_threads.append(build)
                 build.start()
                 ongoingCount += 1
@@ -200,6 +200,7 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
         msaFastaOut is only relevant when outType == file; otherwise it will be ignored
         '''
         # Set up
+        import os
         from Bio import AlignIO
         from Bio.Seq import Seq
         from Bio.Alphabet import SingleLetterAlphabet
@@ -242,16 +243,18 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
                 break
         # Check our values to ensure they're sensible
         if i >= x:
-                print('MSA can\'t be trimmed at this pctTrim value; no columns contain this proportion of sequences!')
+                print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value; no columns contain this proportion of sequences!')
                 return msa      # If the user isn't expecting a returned object this should just disappear; if they want a file out, we won't modify it
         # Compare our MSA length post-trimming to our specified cut-offs to determine whether we're doing anything to this sequence or not
         seqLen = x - i          # This works out fine in 1-based notation
         if minLength < 1:
                 ratio = seqLen / len(msa[0])
                 if ratio < minLength:
+                        print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; no trimming will be performed.')
                         return msa      # We're not going to make any changes if trimming shortens it too much
         else:
                 if seqLen < minLength:
+                        print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; no trimming will be performed.')
                         return msa      # As above
         # Trim our MSA object
         for y in range(len(msa)):       # Don't overwrite i from above! I made this mistake...
@@ -263,6 +266,48 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
                 with open(msaFastaOut, 'w') as fileOut:
                         for row in msa:
                                 fileOut.write('>' + row.description + '\n' + str(row.seq) + '\n')
+
+def msa_score(msa, scoringMethod):
+        # Set up
+        import os
+        from Bio import AlignIO
+        from Bio.SubsMat import MatrixInfo
+        blosum = MatrixInfo.blosum62    # blosum62 seems to be the most commonly used matrix, I'll lean on consensus w/r/t which one is probably best here
+        # Determine what input we are receiving
+        if type(msa) == 'Bio.Align.MultipleSeqAlignment':
+                fileType = 'obj'
+        elif type(msa) == str:
+                if not os.path.isfile(msa):
+                        print('msa_score: You\'ve provided a string input but it isn\'t detected as a file.')
+                        print('Did you type the file name correctly, or do you need to provide the full path to it? Fix your input and try again.')
+                        quit()
+                fileType = 'file'
+        else:
+                print('msa_score: You\'ve provided an input type I am not compatible with.')
+                print('The input should be a Bio.Align.MultipleSeqAlignment object or a string indicating the file location. Fix your input and try again.')
+                quit()
+        # If we're working with a file input, load it as an obj
+        if fileType == 'file':
+                msa = AlignIO.read(msa, 'fasta')
+        # Loop through msa columns and perform pairwise scoring
+        overallScores = []
+        for i in range(len(msa[0].seq)):
+                col = msa[:,i]
+                colScores = []
+                # Column scores based on possible pairs exclusive of '-'
+                for x in range(len(col)-1):
+                        for y in range(x+1, len(col)):
+                                if col[x] != '-' and col[y] != '-':
+                                        pair = (col[x].upper(), col[y].upper())
+                                        if pair not in blosum:
+                                                pair = (col[y].upper(), col[x].upper())
+                                        colScores.append(blosum[pair])
+                                else:
+                                        continue
+                # Average column score with penalty for gaps
+                colScore = (sum(colScores) / len(colScores)) * (col.count('-') / len(col))
+                overallScores.append(colScore)
+                                        
 
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
