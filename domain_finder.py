@@ -304,6 +304,23 @@ def coord_dict_merge(dict1, dict2):
                 dict1[key] = value
         return dict1
 
+def dict_entry_delete(dictObj, index):
+        # Delete the index
+        del dictObj[index]
+        # Renumber all indices after this
+        for i in range(index, len(dictObj)):
+                dictObj[i] = dictObj.pop(i+1)
+        return dictObj
+
+def align_files_rename(fileDir, index, prefix, suffix):
+        # Set up
+        import os, shutil
+        # Delete the file
+        os.unlink(os.path.join(tmpDir, prefix + str(index) + suffix))
+        # Renumber all files after this
+        for i in range(index, len(os.listdir(fileDir))):     # The length of the directory AFTER deletion is what we want, it allows us to loop effectively
+                shutil.move(os.path.join(tmpDir, prefix + str(i+1) + suffix), os.path.join(tmpDir, prefix + str(i) + suffix))
+
 ## MMseqs2 related
 def index_exists(fileNamePrefix, directory):
         import re
@@ -616,7 +633,25 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         break
                 # Alignment steps
                 domclust.tmpdir_setup(tmpDir)
-                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, args.threads, groupDict) # We choose not to use the alignments Hammock presents since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
+                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict) # We choose not to use the alignments Hammock presents since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
+                # Cluster curation steps
+                i = 0
+                while True:
+                        if i >= len(groupDict):
+                                break
+                        msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
+                        msaObj = domclust.msa_trim(msaFileName, 0.4, 0.5, 'obj', msaFileName)   # Values are arbitrary, unlikely to need user-modification; 0.4 means we'll trim up to the point where 40% of the sequence's have a base present in a single column, 0.5 means we will only trim it maximally up to 50% of the sequence length - if we need to trim it more than that to reach our 40% goal, we won't trim it at all
+                        alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
+                        if alignCheck == False:
+                                print('Deleting domain ' + str(i))
+                                groupDict = dict_entry_delete(groupDict, i)
+                                align_files_rename(tmpDir, i, 'Domain_', '_align.fasta')
+                        else:
+                                i += 1
+                if groupDict == {}:
+                        print('No clusters were identifed; program will exit now.')
+                        noClust = True
+                        break
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))

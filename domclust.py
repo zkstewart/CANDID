@@ -267,14 +267,29 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
                         for row in msa:
                                 fileOut.write('>' + row.description + '\n' + str(row.seq) + '\n')
 
-def msa_score(msa, scoringMethod):
+def msa_score(msa, scoringMethod, cutoff):
         # Set up
         import os
         from Bio import AlignIO
-        from Bio.SubsMat import MatrixInfo
-        blosum = MatrixInfo.blosum62    # blosum62 seems to be the most commonly used matrix, I'll lean on consensus w/r/t which one is probably best here
+        import Bio.Align
+        # Define functions integral to this one
+        def blosum_score(pair):
+                # Set up
+                from Bio.SubsMat import MatrixInfo
+                blosum = MatrixInfo.blosum62    # blosum62 seems to be the most commonly used matrix, I'll lean on consensus w/r/t which one is probably best here
+                # Make sure pair is formatted correctly
+                pair = (pair[0].upper(), pair[1].upper())
+                if pair not in blosum:
+                        pair = tuple(reversed(pair))
+                # Return the score
+                return blosum[pair]
+        def sumpairs_score(pair):
+                if pair[0].upper() == pair[1].upper():
+                        return 1
+                else:
+                        return 0
         # Determine what input we are receiving
-        if type(msa) == 'Bio.Align.MultipleSeqAlignment':
+        if type(msa) == Bio.Align.MultipleSeqAlignment:
                 fileType = 'obj'
         elif type(msa) == str:
                 if not os.path.isfile(msa):
@@ -297,17 +312,76 @@ def msa_score(msa, scoringMethod):
                 # Column scores based on possible pairs exclusive of '-'
                 for x in range(len(col)-1):
                         for y in range(x+1, len(col)):
-                                if col[x] != '-' and col[y] != '-':
-                                        pair = (col[x].upper(), col[y].upper())
-                                        if pair not in blosum:
-                                                pair = (col[y].upper(), col[x].upper())
-                                        colScores.append(blosum[pair])
+                                pair = (col[x].upper(), col[y].upper())
+                                if pair[0] != '-' and pair[1] != '-':
+                                        if scoringMethod == 'blosum':
+                                                colScores.append(blosum_score(pair))
+                                        elif scoringMethod == 'sp':
+                                                colScores.append(sumpairs_score(pair))
                                 else:
                                         continue
                 # Average column score with penalty for gaps
-                colScore = (sum(colScores) / len(colScores)) * (col.count('-') / len(col))
+                if colScores != []:
+                        colScore = (sum(colScores) / len(colScores)) * (1 - (col.count('-') / len(col)))
+                else:
+                        colScore = 0    # If there is only a single letter, it receives no score
                 overallScores.append(colScore)
-                                        
+        # Compare our overall score against cutoff and determine if this alignment is "good enough"
+        finalScore = sum(overallScores) / len(overallScores)
+        if finalScore >= cutoff:
+                return True
+        else:
+                return False
+
+def testing_stuff():
+        import os
+        from Bio import AlignIO
+        scoringMethod = 'sp'
+        # Define functions integral to this one
+        def blosum_score(pair):
+                # Set up
+                from Bio.SubsMat import MatrixInfo
+                blosum = MatrixInfo.blosum62    # blosum62 seems to be the most commonly used matrix, I'll lean on consensus w/r/t which one is probably best here
+                # Make sure pair is formatted correctly
+                pair = (pair[0].upper(), pair[1].upper())
+                if pair not in blosum:
+                        pair = tuple(reversed(pair))
+                # Return the score
+                return blosum[pair]
+        def sumpairs_score(pair):
+                if pair[0].upper() == pair[1].upper():
+                        return 1
+                else:
+                        return 0
+        fastaFiles = []
+        for file in os.listdir('/home/lythl/Desktop/CANDID/newtest/tmp_alignments'):
+                if file.endswith('.fasta'):
+                        fastaFiles.append(file)
+        for fasta in fastaFiles:
+                scoringMethod = 'sp'
+                msa = AlignIO.read(os.path.join('/home/lythl/Desktop/CANDID/newtest/tmp_alignments', fasta), 'fasta')
+                overallScores = []
+                for i in range(len(msa[0].seq)):
+                        col = msa[:,i]
+                        colScores = []
+                        # Column scores based on possible pairs exclusive of '-'
+                        for x in range(len(col)-1):
+                                for y in range(x+1, len(col)):
+                                        pair = (col[x].upper(), col[y].upper())
+                                        if pair[0] != '-' and pair[1] != '-':
+                                                if scoringMethod == 'blosum':
+                                                        colScores.append(blosum_score(pair))
+                                                elif scoringMethod == 'sp':
+                                                        colScores.append(sumpairs_score(pair))
+                                        else:
+                                                continue
+                        # Average column score with penalty for gaps
+                        if colScores != []:
+                                colScore = (sum(colScores) / len(colScores)) * (1 - (col.count('-') / len(col)))
+                        else:
+                                colScore = 0    # If there is only a single letter, it receives no score
+                        overallScores.append(colScore)
+                print(sum(overallScores) / len(overallScores))
 
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
@@ -396,164 +470,6 @@ def coord_lists_merge(coordLists, offsetNum):   # offsetNum lets us specify incr
         # Sort coordList and return
         coordList.sort()
         return coordList
-
-def hmmer_grow(domDict, unclustFasta, outputBase, group_dict, rejects_list, iterate):   # Outputbase refers to the path generated in the domain_finder script
-        # Set up
-        import os
-        from Bio import SeqIO
-        iterate += 1    # If we don't reset iterate to 0 by adding a new domain, this lets us ensure that the iterate value increases
-        # Define functions integral to this one
-        def seqgrab(outputBase, seqid, start, stop):
-                # Pull out the protein region
-                infile = os.path.join(outputBase + '_cdhit.fasta')   # We grab the hits from the cdhit.fasta file because the clean.fasta file might have a small stretch of low complexity region inside the sequence region that HMMER is hitting against
-                records = SeqIO.parse(open(infile, 'r'), 'fasta')
-                for record in records:
-                        if record.id == seqid:
-                                aaseq = str(record.seq)
-                                aarecord = record
-                                break
-                aaseq = aaseq[int(start)-1:int(stop)]           # -1 to start to make this 0-indexed
-                aarecord.seq = aaseq
-                return aaseq, aarecord
-        def seqnamer(unclustFasta, seqid, start, stop):
-                # Figure out which domain number this region should be
-                records = SeqIO.parse(open(unclustFasta, 'r'), 'fasta')
-                seqnum = 1
-                for record in records:
-                        baseid = '_'.join(record.id.split('_')[0:-3])
-                        if baseid == seqid:
-                                seqnum = int(record.id.split('_')[-2])+1                # We do it this way because we modify the sequences in our record in-place, which means we might originally have Domain 1-3 for a baseid, but we might delete Domain 2. Thus, because the fasta files are ordered, the last match with the baseid should contain the highest domain number, so we just +1 to it.
-                                #seqnum += 1
-                # Add to fasta
-                newseqname = seqid + '_Domain_' + str(seqnum) + '_' + str(start) + '-' + str(stop)
-                return newseqname
-        
-        # Load in the unclustered domains fasta as a list of records [this lets us append items to it]
-        unclustDoms = list(SeqIO.parse(open(unclustFasta, 'r'), 'fasta'))
-        # Loop through the domDict object and find its best match in the unclustered sequences file and make modifications indicated by hmmer
-        for key, value in domDict.items():
-                for entry in value:
-                        # Extract details from entry [this gives them informative value names, and also is a way of be re-using an older bit of code]
-                        pid = key
-                        dstart = entry[1]
-                        dend = entry[2]
-                        hmmerrange = set(range(int(dstart), int(dend)+1))   # +1 to stop positions to keep everything 1-indexed
-                        # Find best match in the fasta file
-                        best = [0,0,0,0]
-                        secondBest = [0,0,0,0]
-                        positionsOverlapped = set()
-                        for x in range(len(unclustDoms)):
-                                # Get sequence details
-                                seqid_components = unclustDoms[x].id.split('_')
-                                seqid = '_'.join(seqid_components[0:-3])
-                                if seqid == pid:
-                                        start, stop = seqid_components[-1].split('-')
-                                        seqrange = set(range(int(start), int(stop)+1))
-                                        hmmerOvlAmount = 1 - (len(hmmerrange-seqrange) / len(hmmerrange))                   # 1-(calc) means we're getting the amount of the HMMER hit that is overlapped (i.e., 1-[[100-40]/100] == 0.6, which means that 60% of it is overlapped)
-                                        seqOvlAmount = 1 - (len(seqrange-hmmerrange) / len(seqrange))                           # Unsure if this is necessary yet
-                                        positionsOverlapped = positionsOverlapped.union(hmmerrange & seqrange)
-                                        #if hmmerOvlAmount > best[2] or seqOvlAmount > best[3]:
-                                        if hmmerOvlAmount > best[2]:
-                                                secondBest = best
-                                                best = [unclustDoms[x].id, hmmerrange, hmmerOvlAmount, seqOvlAmount]
-                        # Figure out if this hmmer region is novel
-                        if best[2] == 0:                                                                                                                                                        # i.e., this sequence region does not overlap anything in the unclustered domains fasta
-                                # Add unadulterated into the unclustDoms list
-                                newseqname = seqnamer(unclustFasta, pid, dstart, dend)
-                                newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
-                                newrec.id = newseqname
-                                unclustDoms.append(newrec)
-                                #newDoms.append([newseqname, newseq])                # Add this directly into the list
-                                print('Added novel domain to file (' + newseqname + ')')
-                                iterate = 0
-                        elif best[2] <= 0.2:                                                                                                                                                # i.e., this sequence only has slight overlap with other sequences. I use 0.2 since, theoretically, the most that we can trim off a hit here is 39% or so because the secondBest hit will only overlap one side of the sequence. That still means most of the sequence is left intact, so it may be a genuine domain region inbetween two other regions.
-                                # Trim the mostly novel sequence and add into the unclustDoms list
-                                newrange = hmmerrange-positionsOverlapped
-                                newstart = str(min(newrange))
-                                newend = str(max(newrange))
-                                newseqname = seqnamer(unclustFasta, pid, newstart, newend)
-                                newseq, newrec = seqgrab(outputBase, pid, newstart, newend) # Add to list
-                                newrec.id = newseqname
-                                unclustDoms.append(newrec)
-                                print('Added trimmed novel domain to file (' + newseqname + ')')
-                                iterate = 0
-                        # Figure out if there is a (nearly) guaranteed match in the fasta file. I'm allowing secondBest to be <= 0.1 since that means our main hit is still almost certainly the region that best matches the sequence that is incorporated in the HMM.
-                        elif secondBest[2] <= 0.1:
-                                # Handle good matches
-                                if best[2] >= 0.9 or best[3] >= 0.9:
-                                        print('Good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                                        newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)                                 # We don't care about the newrec here since we just need to modify the existing record in place, we're not adding a new record or fusing existing ones
-                                        for x in range(len(unclustDoms)):
-                                                if unclustDoms[x].id == best[0]:
-                                                        unclustDoms[x].id = newseqname
-                                                        unclustDoms[x].seq = newseq
-                                # Handle divergent matches
-                                elif best[2] >= 0.5 or best[3] >= 0.5:         # note that for divergent matches we use 'and'. This is important to prevent fragmentary model matches which overlap an established sequence from overwriting the full length sequence which is part of the model.
-                                        print('Divergent match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                                        newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
-                                        for x in range(len(unclustDoms)):
-                                                if unclustDoms[x].id == best[0]:
-                                                        unclustDoms[x].id = newseqname
-                                                        unclustDoms[x].seq = newseq
-                                # Handle poor matches
-                                else:
-                                        # Handle best case scenario
-                                        if secondBest[2] == 0 and secondBest[3] == 0:
-                                                print('Poor match found: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                                                newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                                newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
-                                                for x in range(len(unclustDoms)):
-                                                        if unclustDoms[x].id == best[0]:
-                                                                unclustDoms[x].id = newseqname
-                                                                unclustDoms[x].seq = newseq
-                                        # Ignore worse matches
-                                        else:
-                                                print('Ignoring highly divergent overlap: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                                                print(best)
-                                                print(secondBest)
-                        # Handle ambiguity
-                        else:
-                                # Handle the best case scenario for an ambiguous match. This still means we can be pretty sure that the best region is the correct match.
-                                if best[2] >= 0.9 and best[3] >= 0.9 and secondBest[2] <= 0.5:
-                                        print('Ambiguous but good match to HMMER hit: ' + pid + '_' + str(dstart) + '-' + str(dend) + ' : ' + best[0])
-                                        newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
-                                        for x in range(len(unclustDoms)):
-                                                if unclustDoms[x].id == best[0]:
-                                                        unclustDoms[x].id = newseqname
-                                                        unclustDoms[x].seq = newseq
-                                # Matches that fall into this category appear to be candidates for fusing the two underlying unclustered domain sequences into a single one
-                                else:
-                                        print('Fusing overlap: ' + best[0] + ' : ' + secondBest[0])
-                                        newseqname = pid + '_Domain_' + best[0].split('_')[-2] + '_' + str(dstart) + '-' + str(dend)
-                                        newseq, newrec = seqgrab(outputBase, pid, dstart, dend)
-                                        # Delete underlying sequences
-                                        for i in range(0, 2):
-                                                for x in range(len(unclustDoms)):
-                                                        if unclustDoms[x].id == best[0] or unclustDoms[x].id == secondBest[0]:
-                                                                del unclustDoms[x]
-                                                                break
-                                        # Append new sequence into file
-                                        newrec.id = newseqname
-                                        unclustDoms.append(newrec)
-                                        print(newseq)
-                                        #print(best)
-                                        #print(secondBest)
-                                        
-        # Update fasta file
-        if iterate != 2:                # If iterate == 2, then we're going to end the while loop. There may be some changes indicated by hmmer from this function, but we're assuming there will be very few since it's already been altered by hmmer once with no impact on the discovery of new domains.
-                with open(outputBase + '_unclustered_domains.fasta', 'w') as outfile:          # This overwrites the old file which is okay since we've already loaded the records in as a list
-                        for x in range(len(unclustDoms)):
-                                seqid = unclustDoms[x].id
-                                seq = str(unclustDoms[x].seq)
-                                outfile.write('>' + seqid + '\n' + seq + '\n')         # The unclustered_domains.fasta should always end on a newline, so we don't need to preface our addition with '\n'
-                        #for dom in newDoms:
-                        #        outfile.write('>' + dom[0] + '\n' + dom[1] + '\n')
-                        
-        # Return value to dictate whether we continue the looping
-        return iterate
 
 def thread_file_name_gen(prefix, threadNum):
         import os
