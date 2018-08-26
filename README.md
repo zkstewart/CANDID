@@ -5,12 +5,14 @@ This is a program undergoing sporadic development. Its intent is to discover nov
 
 Changes that have occurred recently:
 
-1. MMseqs2 is integrated definitively as the searching program. Ideally this program needs to be able to find alternative alignments during profile search, but for the time being its speed and sensitivity can't be matched by PSI-BLAST.
-2. Old, poorly written code has been improved where possible. Functions are now more "drag-and-droppable" and the code should overall be more readable.
-3. Domain identification from MMseqs2 tabular output is modified to use an improved peak finding approach. This should work better the NC Check system I was previously using.
+1. MMseqs2 is integrated definitively as the searching program.
+2. Old, poorly written code has been improved where possible.
+3. Domain identification from MMseqs2 tabular output is modified to use an improved peak finding approach.
+4. System now self-populates new domains each iteration on the basis of the HMMER domtblout file while still being able to keep track of changes. I am doing this with a simple coordinate comparison system.
+5. Hammock is integrated as a possible option for clustering. From testing my original approach seems better and is certainly a lot faster.
+6. MSA scoring function means we shouldn't get low-quality clusters in our output.
 
 Directions for improvement:
-1. More tidying to code, especially in domclust. Determine whether I'm going to use the parse_joiner function (or something similar).
-2. Trial different approaches for the hmm_grow function. I'd like to "unlock" the system to populate entirely new sequences on each iteration, but I still need a way of interrogating the data to find out when we've reached convergence. Unsure how to handle this. I might just opt to modernise hmm_grow to be more friendly and readable.
-3. Test different approaches for domain clustering. Alignment-free clustering appears to give variable results which are difficult to control. Clustering needs to produce consistently accurate results. I will need to see what is currently available, alignment-free or otherwise. I wouldn't mind finding something that is more computationally intensive; if this proved to be a bottleneck, I could try other ways of growing the hmm model (such as using jackhmmer).
-4. See how other programs compare. HC-HMM, Sub-HMMs, and Hammock might contain useful ideas; Hammock might actually be useful as a replacement for the clustering step in this pipeline? PSCAN also looks like it uses a very similar idea to my own (it uses DBSCAN*, I use HDBSCAN) but with a different scoring stage (unsure how it replaces my alignment-free similarity scoring).
+1. More code tidying - requires me to actually finalise the program so I can strip out testing code.
+2. Update benchparse system to work with the newer version of the code.
+3. Make changes to user input to be less confusing.
