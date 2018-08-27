@@ -5,14 +5,13 @@ This is a program undergoing sporadic development. Its intent is to discover nov
 
 Changes that have occurred recently:
 
-1. MMseqs2 is integrated definitively as the searching program.
-2. Old, poorly written code has been improved where possible.
-3. Domain identification from MMseqs2 tabular output is modified to use an improved peak finding approach.
-4. System now self-populates new domains each iteration on the basis of the HMMER domtblout file while still being able to keep track of changes. I am doing this with a simple coordinate comparison system.
-5. Hammock is integrated as a possible option for clustering. From testing my original approach seems better and is certainly a lot faster.
-6. MSA scoring function means we shouldn't get low-quality clusters in our output.
+1. System now self-populates new domains each iteration on the basis of the HMMER domtblout file while still being able to keep track of changes. I am doing this with a simple coordinate comparison system.
+2. Hammock is integrated as a possible option for clustering. From testing my original approach seems better and is certainly a lot faster.
+3. MSA scoring function means we shouldn't get low-quality clusters in our output.
+4. User input should be less confusing. 'help' and 'help-long' help to reduce the overwhelming amount of tunable parameters to just the set that are relevant to most users who will be using _what is hopefully_ my optimised parameters.
 
 Directions for improvement:
-1. More code tidying - requires me to actually finalise the program so I can strip out testing code.
-2. Update benchparse system to work with the newer version of the code.
-3. Make changes to user input to be less confusing.
+
+1. Update benchparse system to work with the newer version of the code.
+2. Figure out optimal default parameters - more testing!
+3. Strip out testing code once I have figured out the optimal default parameters.
