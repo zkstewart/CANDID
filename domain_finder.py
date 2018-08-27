@@ -1,7 +1,7 @@
 #! python3
 
 # Import external packages
-import argparse, os, time, shutil, copy
+import argparse, os, time, shutil, copy, platform
 # Import classes from included script folder
 from domfind import benchparse
 from domfind import domtblout_handling, domfind, domclust
@@ -11,14 +11,6 @@ from domfind import domtblout_handling, domfind, domclust
 # Argument validation
 def validate_args(args):
         import platform
-        # Prevent operation on Windows immediately to not get user hopes up
-        '''I tried to make this program Windows-compatible, and it mostly is, but I can't figure out how to get
-        Hammock (and more specifically, HHsuite) to work with Cygwin. If I can resolve this problem the rest of
-        the code is ready-to-go with Windows... for the time being, I need to disable it'''
-        if platform.system() == 'Windows':
-                print('This program is currently not compatible with Windows due to its reliance upon HHsuite for protein clustering.')
-                print('This might change in the future if I can figure out how to make HHsuite work with Cygwin. Until then, try running this on a Linux PC or set up a Virtual Machine.')
-                quit()
         # Ensure that no None values exist
         for key, value in vars(args).items():
                 if value == None and key != 'config':   # Config is the only argument that can be None right now
@@ -39,14 +31,16 @@ def validate_args(args):
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
         # Validate program execution is successful
-        if False:       ## TESTING
+        if True:       ## TESTING
                 program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
                 program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
                 program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
                 program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
                 program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
                 program_execution_check(os.path.join(args.segdir, 'seg'))
-                program_execution_check(os.path.join(args.javadir, 'java -h'))
+                if args.hammockdir != '':
+                        program_execution_check(os.path.join(args.javadir, 'java -h'))
+                        program_execution_check(os.path.join(args.javadir, 'java') + ' -jar ' + os.path.join(args.hammockdir, 'Hammock.jar -h'))
                 program_execution_check(os.path.join(args.python2dir, 'python -h'))
                 python_version_check(args.python2dir)
                 program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
@@ -85,17 +79,17 @@ def validate_args(args):
                                 print(entry + ' argument must be able to become a float value (i.e., a number with decimal places). You specified "' + vars(args)[entry] + '" on command-line or in the config file. Fix this and try again.')
                                 quit()
         # Validate arguments with choice specification
-        if args.signalporg not in ['euk', 'gram-', 'gram+', 'EUK', 'GRAM-', 'GRAM+']:
+        if args.signalporg not in ['euk', 'gram-', 'gram+']:
                 print('signalporg must be a value within the below list. Fix this in your config file and try again.')  # We know this mistake is in the config file since the command-line will enforce this choice
-                print(['euk', 'gram-', 'gram+', 'EUK', 'GRAM-', 'GRAM+'])
+                print(['euk', 'gram-', 'gram+'])
                 quit()
         if args.skip not in ['cath', 'superfamily', 'both', 'noskip']:
                 print('skip must be a value within the below list. Fix this in your config file and try again.')
                 print(['cath', 'superfamily', 'both', 'noskip'])
                 quit()
-        if args.alf not in ['braycurtis', 'google', 'canberra']:
+        if args.alf not in ['google', 'braycurtis', 'canberra', 'hammock']:
                 print('alf must be a value within the below list. Fix this in your config file and try again.')
-                print(['braycurtis', 'google', 'canberra'])
+                print(['google', 'braycurtis', 'canberra', 'hammock'])
                 quit()
         if args.reduce not in ['n', '11', '15']:
                 print('reduce must be a value within the below list. Fix this in your config file and try again.')
@@ -106,7 +100,7 @@ def program_execution_check(cmd):
         import subprocess
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
-        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage'):     # Need this extra check for seg since it puts its usage information into stderr rather than stdout
+        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage') and not cmderr.decode("utf-8").startswith('HAMMOCK'):     # Need these extra checks for seg and Hammock since they put usage information into stderr rather than stdout
                 print('Failed to execute program "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
                 print('---')
                 print('stderr is below for debugging purposes.')
@@ -126,7 +120,10 @@ def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
         os.remove(os.path.join(outDir, scriptFile))   # Clean up temporary file
-        if cmderr.decode("utf-8") != '' and not 'cannot open -h' in cmderr.decode("utf-8").lower():      # Need this extra check for mafft since we can't get error-free output without giving an actual fasta file input
+        if cmderr.decode("utf-8") != '' and not 'cannot open -h' in cmderr.decode("utf-8").lower() and not 'perl: warning: falling back to the standard locale' in cmderr.decode("utf-8").lower():
+                '''Need the above extra checks for mafft since we can't get error-free output without giving an actual fasta file input,
+                and for signalP since, on Windows at least, you can receive perl warnings which don't impact program operations.
+                I think if that 'falling back' line is in stderr, nothing more serious will be - this isn't completely tested, however.'''
                 print('Failed to execute ' + exeFile + ' program via Cygwin using "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
                 print('---')
                 print('stderr is below for debugging purposes.')
@@ -182,18 +179,18 @@ def default_parameter_dict(inputKey):
         include the fasta and outdir (mandatory command-line arguments), the hmmdb (which needs
         to be specified on command-line or in the config file) as well as the config file itself
         which will have been specified on the command-line, discovered by the output_arg_handling
-        function, or the user specified all arguments on the command-line (which we'll check shortly)
+        function, or the user specified all necessary arguments on the command-line (which we'll check shortly)
         '''
         defaultParams = {'threads': 1, 'mmseqs2dir': '', 'cdhitdir': '',
                          'hmmer3dir': '', 'signalpdir': '', 'segdir': '',
-                         'javadir': '', 'mafftdir': '', 'cdc': 0.4,
+                         'cygwindir': '', 'javadir': '', 'mafftdir': '', 'cdc': 0.4,
                          'cdn': 2, 'cdg': 0, 'cdas': 0.9, 'cdal': 0.6, 'cdm': 1000,
                          'signalporg': 'euk', 'hmmeval': 1e-1, 'hmmevalnov': 1e-1,
                          'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n',
                          'minsize': 3,'minsample': 2, 'leaf': False, 'singleclust': False,
-                         'numiters': 0, 'cleanAA': 30, 'verbose': False,
-                         #'fasta': , 'outdir': None, 'config': None,         
-                         'hammockdir': None, 'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
+                         'numiters': 0, 'cleanAA': 30, 'verbose': False, 'hammockdir': '',      # hammockdir is an exception to the below comment; we don't want to make it mandatory, but if Hammock is being used, we can't specify a default
+                         #'fasta': , 'outdir': None, 'config': None,                            # If hammockdir == '' then we know that we aren't using it, so thi
+                         'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
         mandatoryParams = {'fasta': None, 'outdir': None, 'config': None}       # By separating these, this lets us know that these shouldn't be defaulted and shouldn't be in the config file at all
         cmdLineOnlyParams = {'generate_config': None, 'benchmark': None}        # We also separate these since they should not be in the config file but aren't mandatory
         if inputKey in defaultParams:
@@ -350,38 +347,74 @@ def verbose_print(verbose, text):
                 print(text)
 
 #### USER INPUT SECTION
-usage = """Usage: <fasta file> <output directory> <threads> [-options]
+usageShort = """Usage: <fasta file> <output directory> [-options]
 ----
-%(prog)s will find novel globular domain regions using all-against-all MMSeqs2 search.
-%(prog)s can be run by providing command-line arguments, by providing a config file with 
-these arguments, or with a combination of the two. Arguments provided on the command-line
-will overrule any within your config file, so beware of this behaviour!
+%(prog)s can be run by providing command-line arguments, by
+providing a config file with these arguments, or with a combination
+of the two. Arguments provided on the command-line will overrule
+any within your config file, so beware of this behaviour!
 ----
-Outputs from this program will be stored within the specified outdir. Within this
-outdir will be a config file for your run; re-running this program and specifying the same
-outdir will attempt to resume the program run. This program to look at the files in this
-folder and determine where it exited, and it will also make use of the config file in this directory.
-Thus, you do not need to specify a config file when resuming a previous run. It is important
-to note that if you choose to resume a run and specify command-line or config file arguments
-which differ to those used in the initial program run, unexpected results may occur.
+%(prog)s operates as a pipeline of other programs which must
+be discoverable using your system's PATH or specified on command-line
+or within your .config file.
 ----
-This program requires CD-HIT, MMseqs2, signalP, seg, COILS, HMMER3, as well as Python 3.x
-and Python 2.7 to be installed. The directories of these programs must be specified in this script
-or discoverable within your system's PATH variable.
+%(prog)s is capable of resuming a previous run within the
+output directory; if a config file is not specified on command-line,
+the latest config file in outdir will be used (i.e., run2.config
+will be used, not run1.config).
 ----
-Additionally, a HMM database file of domains is required to exclude known models from discovery.
-A program 'hmm_db_download.py' is provided to help generate this, but you can create your own.
-Specify the full path to this file.
-----
-Run this main script using Python 3.x. If running on a Windows system, install Cygwin including the
-main packages (e.g., Perl, interpretters). A comprehensive list of Cygwin packages required is difficult to collate.
-----
-IMPORTANT: Note that any directories referred to in this program should NOT include any spaces in their name
-(e.g., 'output directory' must be 'output_directory'), and that HMMER version 3.1 or above is required.
+IMPORTANT: Note that any directories referred to in this program
+should NOT include any spaces in their name (e.g., 'output directory'
+must be 'output_directory'), and that HMMER version 3.1 or above
+is required.
 """
 
+usageLong = """Usage: <fasta file> <output directory> [-options]
+----
+%(prog)s will find novel domain regions by excluding known homologous
+regions from proteins, subsequently utilising sensitive all-against-all
+MMseqs2 search, clustering of sequences, and iterative HMMER query.
+----
+%(prog)s can be run by providing command-line arguments, by providing a
+config file with these arguments, or with a combination of the two. 
+Arguments provided on the command-line will overrule any within your
+config file, so beware of this behaviour!
+----
+%(prog)s will store outputs within the specified outdir. Within this
+outdir will be a config file for your run; re-running this program and
+specifying the same outdir will attempt to resume the program run by
+analysis of the contents of this directory. If a config file is not
+specified on the command-line, the latest config file in outdir will
+be used (i.e., run2.config will be used, not run1.config). It is 
+important to note that if you choose to resume a run and specify
+command-line or config file arguments which differ to those used 
+in the initial program run, unexpected results may occur.
+----
+This program requires CD-HIT, MMseqs2, signalP, seg, COILS, HMMER3, as
+well as Python 3.x and Python 2.7 to be installed. The directories of
+these programs must be specified in this script or discoverable within
+your system's PATH.
+----
+Additionally, a HMM database file of domains is required to exclude known
+models from discovery. A program 'hmm_db_download.py' is provided to help
+generate this, but you can create your own. Specify the full path to this file.
+----
+Run this main script using Python 3.x. This script is Windows and Linux
+compatible; at this time, Hammock is not Windows-compatible, so if you
+wish to use Hammock instead of alignment-free clustering, you must use
+another operating system.
+----
+IMPORTANT: Note that any directories referred to in this program should
+NOT include any spaces in their name (e.g., 'output directory' must be
+'output_directory'), and that HMMER version 3.1 or above is required.
+"""
+
+# Allow hidden options in arg parsing
+import sys
+showHiddenArgs = '-help-long' in sys.argv
+
 # Required
-p = argparse.ArgumentParser(description=usage, formatter_class=argparse.RawDescriptionHelpFormatter)
+p = argparse.ArgumentParser(description=usageLong if showHiddenArgs else usageShort, formatter_class=argparse.RawDescriptionHelpFormatter)
 #p.add_argument("fasta", type = str, help="Specify the fasta file from which domains will be identified.")
 #p.add_argument("outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
 p.add_argument("-fasta", dest="fasta", type = str, help="Specify the fasta file from which domains will be identified.")
@@ -389,7 +422,9 @@ p.add_argument("-outdir", dest="outdir", type = str, help="Specify the name of t
 
 # Opts 0: Basic program requirements which do not need to be specified in all cases
 p.add_argument("-config", dest="config", type = str,
-                  help="Specify the config file used for parameter settings; if not provided and you are beginning a new run, defaults will be used; if you are resuming a previous run, this program will read in the parameter file within the specified 'outdir' directory.")
+                  help="""Specify the config file used for parameter settings; if not provided and you are beginning a new run,
+                  defaults will be used; if you are resuming a previous run, this program will read in the parameter file
+                  within the specified 'outdir' directory unless specified here.""")
 p.add_argument("-threads", dest="threads", type = int,
                   help="Specify the number of threads to use for any steps that are multi-thread capable.") # I think we technically use processes and not threads, but let's not get into pettiness
 # Opts 1: Directory locations
@@ -403,80 +438,119 @@ p.add_argument("-sigpdir", dest="signalpdir", type = str,
                   help="Specify the directory where signalp executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-segdir", dest="segdir", type = str,
                   help="Specify the directory where seg executables are located. If this is already in your PATH, you can leave this blank.")
-p.add_argument("-javadir", dest="javadir", type = str,
-                  help="Specify the directory where the java executable file is located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-mafftdir", dest="mafftdir", type = str,
                   help="Specify the directory where the mafft executables on a Unix system or .bat file on a Windows is located. If this is already in your PATH, you can leave this blank.")
-#p.add_argument("-cwdir", dest="cygwindir", type = str,
-#                  help="If running this script on a Windows system, Cygwin is required. Specify the location of the /bin directory here. If running on other systems, or if this is already in your PATH, you can leave this blank.")
-p.add_argument("-hammdir", dest="hammockdir", type = str,
-                  help="Specify the directory where the Hammock.jar file is located. This MUST be specified here or in your config file.")
 p.add_argument("-py2dir", dest="python2dir", type = str,
                   help="Specify the python2.7 directory that contains python.exe. This MUST be specified here or in your config file.")
 p.add_argument("-coilsdir", dest="coilsdir", type = str,
                   help="Specify the directory where the pscoils .py file is located. This MUST be specified here or in your config file.")
+p.add_argument("-javadir", dest="javadir", type = str,
+                  help="""Specify the directory where the java executable file is located ONLY if you want to use Hammock
+                  instead of alignment-free clustering. If this is already in your PATH, you can leave this blank."""
+                  if showHiddenArgs else argparse.SUPPRESS)
+p.add_argument("-hammdir", dest="hammockdir", type = str,
+                  help="""Specify the directory where the Hammock.jar file is located ONLY if you want to use Hammock
+                  instead of alignment-free clustering. If so, this MUST be specified here or in your config file."""
+                  if showHiddenArgs else argparse.SUPPRESS)
+p.add_argument("-cwdir", dest="cygwindir", type = str,
+                  help="""Cygwin is required since you are running this program on a Windows computer.
+                  Specify the location of the bin directory here or, if this is already in your PATH, you can leave this blank."""
+                  if platform.system() == 'Windows' else argparse.SUPPRESS)     # This is quite handy, being able to show arguments specific to OS
 # Opts 2: CD-HIT parameters
 p.add_argument("-cdc", dest="cdc", type = float,
-                  help="This command is equivalent to the -c option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -c option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cdn", dest="cdn", type = int,
-                  help="This command is equivalent to the -n option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -n option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cdg", dest="cdg", type = int,
-                  help="This command is equivalent to the -G option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -G option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cdas", dest="cdas", type = float,
-                  help="This command is equivalent to the -aS option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -aS option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cdal", dest="cdal", type = float,
-                  help="This command is equivalent to the -aL option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -aL option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cdm", dest="cdm", type = int,
-                  help="This command is equivalent to the -M option that will be provided to CD-HIT.")
+                  help="This command is equivalent to the -M option that will be provided to CD-HIT."
+                  if showHiddenArgs else argparse.SUPPRESS)
 # Opts 3: SignalP parameter
-p.add_argument("-sigporg", dest="signalporg", type = str, choices = ['euk', 'gram-', 'gram+', 'EUK', 'GRAM-', 'GRAM+'],
-                  help="Specify the type of organism for SignalP. Refer to the SignalP manual if unsure what this means.")
+p.add_argument("-sigporg", dest="signalporg", type = str, choices = ['euk', 'gram-', 'gram+'],
+                  help="""Specify the type of organism for SignalP from the available options.
+                  Refer to the SignalP manual if unsure what this means.""")
 # Opts 4: HMMER3 parameters
 p.add_argument("-hmmdb", dest="hmmdb", type = str,
-                  help="Specify the full path to the hmm database file to use for HMMER3 domain prediction. It is recommended you use the complementary 'hmm_db_download.py' program to generate this.")
+                  help="""Specify the full path to the hmm database file to use for HMMER3 domain prediction.
+                  It is recommended you use the complementary 'hmm_db_download.py' program to generate this."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-hmmeval", dest="hmmeval", type = float,
-                  help="Specify the e-value cut-off to enforce for removing known domains from sequences. Default recommended == 1")
+                  help="""Specify the e-value cut-off to enforce for removing known domains from sequences. Default recommended == 1"""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-hmmevalnov",dest="hmmevalnov", type = float,
-                  help="Specify the e-value cut-off to enforce for clustering novel domains from sequences. This should be equal to or stricter than that enforced for removing known domains.")
+                  help="""Specify the e-value cut-off to enforce for clustering novel domains from sequences.
+                  This should be equal to or stricter than that enforced for removing known domains."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-skip",dest="skip", type = str, choices = ['cath', 'superfamily', 'both', 'noskip'],
-                  help="Optional ability to ignore domain predictions from CATH and/or SUPERFAMILY databases if they are present in your HMM database.")        # Consider whether this should remain in the file versions
+                  help="""Optional ability to ignore domain predictions from CATH and/or SUPERFAMILY databases if they are present
+                  in your HMM database.""" if showHiddenArgs else argparse.SUPPRESS)        # Consider whether this should remain in the file versions
 # Opts 5: MMseqs2 parameters
 p.add_argument("-mms2eval", dest="mms2eval", type = float,
-                  help="Specify the e-value cut-off to enforce for returning MMseqs2 hits. Default recommended == 1")
+                  help="""Specify the e-value cut-off to enforce for returning MMseqs2 hits. Default recommended == 1"""
+                  if showHiddenArgs else argparse.SUPPRESS)
 # Opts 5: Alignment free algorithms
-p.add_argument("-alf", dest="alf", type = str, choices = ['braycurtis', 'google', 'canberra'],
-                  help="Specify the alignment-free algorithm to employ. Recommended to use braycurtis.")
+p.add_argument("-alf", dest="alf", type = str, choices = ['google', 'braycurtis', 'canberra', 'hammock'],
+                  help="""Specify the alignment-free algorithm to employ. Recommended to use google.
+                  If you wish to use Hammock, specify it here IN ADDITION TO providing the location of the Hammock.jar file."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-reduce", dest="reduce", choices = ['n', '11', '15'],
-                  help="If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n').")
+                  help="""If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether
+                  this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n').""")   ### MAKE MSA SCORE COMPATIBLE WITH REDUCED ALPHABET
 # Opts 6: HDBSCAN algorithm parameters
 p.add_argument("-minsize", dest="minsize", type = int,
-                  help="Dictates the minimum cluster size argument provided to HDBSCAN. Higher numbers will result in identification of domains that occur more frequently in your data. Recommended to use 3 (at least).")
+                  help="""Dictates the minimum cluster size argument provided to HDBSCAN. 
+                  Higher numbers will result in identification of domains that occur more frequently in your data. 
+                  Recommended to use 2 (at least).""" if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-minsample", dest="minsample", type = int,
-                  help="Dictates the minimum sample size argument provided to HDBSCAN. Higher numbers will increase the strictness with which HDBSCAN clusters sequences, typically resulting in less sensitivity but higher specificity. Recommended to use 2.")
+                  help="""Dictates the minimum sample size argument provided to HDBSCAN. 
+                  Higher numbers will increase the strictness with which HDBSCAN clusters sequences, 
+                  typically resulting in less sensitivity but higher specificity. Recommended to use 2."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-leaf", dest="leaf", action = "store_true", default = False,
-                  help="Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. Should result in a higher number of smaller-sized groups being identified. Not using leaf is recommended.")
+                  help="""Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. 
+                  Should result in a higher number of smaller-sized groups being identified. Not using leaf is recommended."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-singleclust", dest="singleclust",  action = "store_true", default = False,
-                  help="Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. By default HDBSCAN recommends that you do not allow this. If you believe there may only be a single novel domain in your data, you can provide this argument.")
+                  help="""Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. 
+                  By default HDBSCAN recommends that you do not allow this. If you believe there may only be a 
+                  single novel domain in your data, you can provide this argument."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 # Opts 7: Iteration control
 p.add_argument("-numiters", dest="numiters", type = int,
-                  help="Optionally specify an upper limit on the amount of times this program will iterate through HMMER domain discovery. Recommended value depends on size of dataset. Specifying numiters == 10 means this program will end after 10 iterations OR when no new regions are found, whichever comes first. Numiters == 0 means the program will stop iterating only when no new domains are found.")
+                  help="""Optionally specify an upper limit on the amount of times this program will iterate through HMMER domain discovery.
+                  Recommended value depends on size of dataset. Specifying numiters == 10 means this program will end after 10 iterations
+                  OR when no new regions are found, whichever comes first. Numiters == 0 means the program will stop iterating only when
+                  no new domains are found.""" if showHiddenArgs else argparse.SUPPRESS)
 # Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
 p.add_argument("-cleanAA", dest="cleanAA", type = int, default = 30,
-                  help="This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length of a true domain. This value is not intended to be changed; experienced users may wish to do so, however.")
-#p.add_argument("-cooccur", dest="cooccur", type = float, default = 0.75,
-#                  help="This command is not intended to be changed; experienced users may wish to change this, however.")      ## This value is part of the 'parse_joiner' function. Currently it is not being used; future updates may support a co-occurrence identifier to find potentially incorrectly separated domains (realistically, this would probably be a separate program...)
+                  help="""This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length
+                  of a true domain. This value is not intended to be changed; experienced users may wish to do so, however."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = False,
-                  help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED.")
+                  help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED."
+                  if showHiddenArgs else argparse.SUPPRESS)
 # Opts 9: Alternative program operations
 p.add_argument("-generate_config", dest="generate_config", action = "store_true", default = False,
-                  help="Instead of running this program, just generate a .config file within the specified outdir; this will be a combination of default parameters plus any you specify here on the command-line.")
+                  help="""Instead of running this program, just generate a .config file within the specified outdir;
+                  this will be a combination of default parameters plus any you specify here on the command-line.""")
 p.add_argument("-v", dest="verbose", action = "store_true", default = False,
                   help="Optionally print program progress details.")
-
+p.add_argument("-help-long", dest="help-long", action = "help", default = False,
+                  help="Show all options, including those that are not recommended to be changed.")
 
 args = p.parse_args()
 ## HARD CODED FOR TESTING
-args.fasta = '/home/lythl/Desktop/CANDID/cal_dge_orfs_prot_33AA.fasta'
+args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
 args.outdir = 'newtest'
 args.verbose = True
 
@@ -486,7 +560,7 @@ args.verbose = True
 args = output_arg_handling(args)
 
 ## HARD CODED FOR TESTING
-args.config = '/home/lythl/Desktop/CANDID/newtest/newtest_run27.config'
+args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\newtest\newtest_run27.config'
 
 # Combine command-line & config file arguments
 if args.config != None:
@@ -602,10 +676,13 @@ if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
 
 #### DOMAIN CLUSTERING
 verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
+if args.hammockdir != '' and args.alf == 'hammock':
+        verbose_print(args.verbose, '# Clustering program = Hammock')
+else:
+        verbose_print(args.verbose, '# Clustering program = Alignment-free HDBSCAN')
 
 # Set up for main loop
 tmpDir = os.path.join(args.outdir, 'tmp_alignments')
-clustering = 'HDBSCAN'  # TESTING: If I want to provide both options, I can modify the argument parsing a bit
 prevGroupDict = {}
 iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
@@ -619,16 +696,15 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 if loopCount > args.numiters and args.numiters != 0:
                         break
                 # Clustering step
-                if clustering == 'Hammock':
+                if args.hammockdir != '' and args.alf == 'hammock':
                         # Hammock clustering
                         domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
                         groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
                 else:
                         # HDBSCAN clustering
-                        matrix1, matrix2, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, 'google')
+                        matrix1, matrix2, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, args.alf)
                         groupDict = domclust.cluster_hdb(False, False, 2, 1, matrix1, matrix2, idList)  # TESTING: Params are hard coded
                 if groupDict == None:
-                        print('No clusters were identifed; program will exit now.')
                         noClust = True
                         break
                 # Alignment steps
@@ -643,13 +719,11 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         msaObj = domclust.msa_trim(msaFileName, 0.4, 0.5, 'obj', msaFileName)   # Values are arbitrary, unlikely to need user-modification; 0.4 means we'll trim up to the point where 40% of the sequence's have a base present in a single column, 0.5 means we will only trim it maximally up to 50% of the sequence length - if we need to trim it more than that to reach our 40% goal, we won't trim it at all
                         alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
                         if alignCheck == False:
-                                print('Deleting domain ' + str(i))
                                 groupDict = dict_entry_delete(groupDict, i)
                                 align_files_rename(tmpDir, i, 'Domain_', '_align.fasta')
                         else:
                                 i += 1
                 if groupDict == {}:
-                        print('No clusters were identifed; program will exit now.')
                         noClust = True
                         break
                 # HMMER3 steps
@@ -665,14 +739,18 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                                 print('Something changed')
                         else:
                                 iterate += 1
-                                print('Nothing changed')
+                                print('Nothing changed')        # If this happens once, it will happen twice from current testing; change behaviour if this holds true on larger test sets
                 prevCoordDict = copy.deepcopy(coordDict)        # Hold onto this for comparison
                 # Extract new unclustered domains
                 domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
                 loopCount += 1
 
-if noClust == False and enteredMain == True:
-        # Provide informative loop exit text
+# Provide informative loop exit text
+if noClust == True:
+        print('No clusters were identifed.')
+elif enteredMain == False:
+        print('CANDID output files already exist in this directory; move or delete these to perform CANDID iteration again.')
+else:
         print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
         if loopCount > args.numiters and args.numiters != 0:
                 print('This occurred after the maximum iteration limit was reached.')
