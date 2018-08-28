@@ -100,7 +100,7 @@ def program_execution_check(cmd):
         import subprocess
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
-        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage') and not cmderr.decode("utf-8").startswith('HAMMOCK'):     # Need these extra checks for seg and Hammock since they put usage information into stderr rather than stdout
+        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage') and not cmderr.decode("utf-8").startswith('HAMMOCK') and not 'cannot open -h' in cmderr.decode("utf-8").lower():     # Need these extra checks for seg and Hammock since they put usage information into stderr rather than stdout; with MAFFT, it can't run without a file input
                 print('Failed to execute program "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
                 print('---')
                 print('stderr is below for debugging purposes.')
@@ -144,11 +144,11 @@ def python_version_check(pythonDir):
 def output_arg_handling(args):
         # Handle output directory
         if not os.path.isdir(args.outdir):
-                print('You have not specified an existing outdir, so that means we are starting a new run.')
+                print('You have not specified an existing outdir, so that means we are starting a new run.\n')
                 os.mkdir(args.outdir)
         else:
                 # Handle config file within existing output directory
-                print('You have specified an existing outdir, so that means we are resuming a run.')
+                print('You have specified an existing outdir, so that means we are resuming a run.\n')
                 if args.config == None:
                         # If we're resuming a run and we haven't specified a config file, find the config file present in the outdir; a standardised naming scheme is used, so we should be able to find it
                         configFiles = []
@@ -164,7 +164,7 @@ def output_arg_handling(args):
                                 configFiles.sort(key = lambda x: -int(x.rsplit('_run', maxsplit=1)[1].split('.config')[0]))
                                 args.config = os.path.join(args.outdir, configFiles[0])
                                 print('You didn\'t specify a config file on command-line, so I\'m going to use the most recent config file present in this directory.')
-                                print('This looks like "' + os.path.abspath(args.config) + '"... does this seem right to you? If it isn\'t, specify the config file explicitly on the command-line.')
+                                print('This looks like "' + os.path.abspath(args.config) + '"... does this seem right to you? If it isn\'t, specify the config file explicitly on the command-line.\n')
                 else:
                         # If we're resuming a run and we HAVE specified a config file, warn the user that any changes could have unpredictable results
                         print('You specified a config file on the command-line which I was able to find. However, note that if this config file differs to the one used in the original program run, unexpected results may occur.')
@@ -192,7 +192,8 @@ def default_parameter_dict(inputKey):
                          #'fasta': , 'outdir': None, 'config': None,                            # If hammockdir == '' then we know that we aren't using it, so thi
                          'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
         mandatoryParams = {'fasta': None, 'outdir': None, 'config': None}       # By separating these, this lets us know that these shouldn't be defaulted and shouldn't be in the config file at all
-        cmdLineOnlyParams = {'generate_config': None, 'benchmark': None}        # We also separate these since they should not be in the config file but aren't mandatory
+        cmdLineOnlyParams = {'generate_config': None, 'benchmark': None,        # We also separate these since they should not be in the config file but aren't mandatory
+                             'help-long': None}        
         if inputKey in defaultParams:
                 return defaultParams[inputKey]
         elif inputKey in mandatoryParams:
@@ -237,7 +238,7 @@ def config_file_args_update(args, configFile):
 
 def defaults_args_update(args):
         for key, value in vars(args).items():
-                if value == None:
+                if value == None or value == '':
                         default = default_parameter_dict(key)
                         if type(default) != None:                     # The other 'defaults' that are booleans are to be ignored
                                 vars(args)[key] = default
@@ -249,7 +250,7 @@ def config_file_generation(args):
         # Generate the config file
         with open(configFile, 'w') as fileOut:
                 for key, value in vars(args).items():
-                        # Skip mandatory arguments
+                        # Skip mandatory or command-line only arguments
                         if default_parameter_dict(key) == 'mandatory' or default_parameter_dict(key) == 'cmdonly':
                                 continue
                         # Write everything else to file
@@ -345,6 +346,10 @@ def file_name_gen(prefix, suffix):
 def verbose_print(verbose, text):
         if verbose:
                 print(text)
+
+def create_blank_file(fileName):
+        fileOut = open(fileName, 'w')
+        fileOut.close()
 
 #### USER INPUT SECTION
 usageShort = """Usage: <fasta file> <output directory> [-options]
@@ -496,7 +501,7 @@ p.add_argument("-skip",dest="skip", type = str, choices = ['cath', 'superfamily'
                   in your HMM database.""" if showHiddenArgs else argparse.SUPPRESS)        # Consider whether this should remain in the file versions
 # Opts 5: MMseqs2 parameters
 p.add_argument("-mms2eval", dest="mms2eval", type = float,
-                  help="""Specify the e-value cut-off to enforce for returning MMseqs2 hits. Default recommended == 1"""
+                  help="""Specify the e-value cut-off to enforce for returning MMseqs2 hits. Default recommended == 0.1"""
                   if showHiddenArgs else argparse.SUPPRESS)
 # Opts 5: Alignment free algorithms
 p.add_argument("-alf", dest="alf", type = str, choices = ['google', 'braycurtis', 'canberra', 'hammock'],
@@ -516,11 +521,11 @@ p.add_argument("-minsample", dest="minsample", type = int,
                   Higher numbers will increase the strictness with which HDBSCAN clusters sequences, 
                   typically resulting in less sensitivity but higher specificity. Recommended to use 2."""
                   if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-leaf", dest="leaf", action = "store_true", default = False,
+p.add_argument("-leaf", dest="leaf", action = "store_true", default = None,                             # Note that we need defaults to == None for arguments where action == "store_true" in order for our command-line/config file handling to work
                   help="""Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. 
                   Should result in a higher number of smaller-sized groups being identified. Not using leaf is recommended."""
                   if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-singleclust", dest="singleclust",  action = "store_true", default = False,
+p.add_argument("-singleclust", dest="singleclust",  action = "store_true", default = None,
                   help="""Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. 
                   By default HDBSCAN recommends that you do not allow this. If you believe there may only be a 
                   single novel domain in your data, you can provide this argument."""
@@ -532,27 +537,28 @@ p.add_argument("-numiters", dest="numiters", type = int,
                   OR when no new regions are found, whichever comes first. Numiters == 0 means the program will stop iterating only when
                   no new domains are found.""" if showHiddenArgs else argparse.SUPPRESS)
 # Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
-p.add_argument("-cleanAA", dest="cleanAA", type = int, default = 30,
+p.add_argument("-cleanAA", dest="cleanAA", type = int,
                   help="""This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length
                   of a true domain. This value is not intended to be changed; experienced users may wish to do so, however."""
                   if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = False,
+p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = False,                  # We leave command-line only values as False
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED."
                   if showHiddenArgs else argparse.SUPPRESS)
 # Opts 9: Alternative program operations
 p.add_argument("-generate_config", dest="generate_config", action = "store_true", default = False,
                   help="""Instead of running this program, just generate a .config file within the specified outdir;
                   this will be a combination of default parameters plus any you specify here on the command-line.""")
-p.add_argument("-v", dest="verbose", action = "store_true", default = False,
+p.add_argument("-v", dest="verbose", action = "store_true", default = None,
                   help="Optionally print program progress details.")
-p.add_argument("-help-long", dest="help-long", action = "help", default = False,
+p.add_argument("-help-long", dest="help-long", action = "help", default = False,                        # It doesn't matter if this is None or False
                   help="Show all options, including those that are not recommended to be changed.")
 
 args = p.parse_args()
 ## HARD CODED FOR TESTING
-args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
-args.outdir = 'newtest'
-args.verbose = True
+#args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
+args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\GCA_001417965.1_Aiptasia_genome_1.1_protein_subset.fasta'
+#args.outdir = 'newtest'
+args.outdir = 'exaiptest'
 
 #### DATA PREPARATION
 
@@ -560,7 +566,7 @@ args.verbose = True
 args = output_arg_handling(args)
 
 ## HARD CODED FOR TESTING
-args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\newtest\newtest_run27.config'
+args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\basic_CANDID.config'
 
 # Combine command-line & config file arguments
 if args.config != None:
@@ -587,92 +593,105 @@ outputBase = os.path.join(args.outdir, fastaBase)
 
 ### RUN CD-HIT
 verbose_print(args.verbose, '# Step 1/9: CD-HIT clustering')
-if not os.path.isfile(outputBase + '_cdhit.fasta'):
+if not os.path.isfile(outputBase + '_step1.complete'):
         params = (args.cdc, args.cdn, args.cdg, args.cdas, args.cdal, args.cdm, args.threads)
         domfind.run_cdhit(args.cdhitdir, args.outdir, args.fasta, fastaBase + '_cdhit.fasta', params)
+        create_blank_file(outputBase + '_step1.complete')
 
 ### CHUNK CD-HIT FOR THREADING
-chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
+#chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
 
 ### RUN HMMER3
 verbose_print(args.verbose, '# Step 2/9: HMMER non-novel domain prediction')
-if not os.path.isfile(outputBase + '_cdhit_hmmer.results'):
+if not os.path.isfile(outputBase + '_step2.1.complete'):
         domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, outputBase + '_cdhit.fasta', outputBase + '_cdhit_hmmer.results')
+        create_blank_file(outputBase + '_step2.1.complete')
 
 if not args.benchmark:
-        if not os.path.isfile(outputBase + '_hmmerParsed.results'):
+        if not os.path.isfile(outputBase + '_step2.2.complete'):
                 domDict = domfind.hmmer_parse_domfind(outputBase + '_cdhit_hmmer.results', args.hmmeval, args.skip)
                 domfind.hmmer_dict_to_file(domDict, outputBase + '_hmmerParsed.results')
                 domDict = None
+                create_blank_file(outputBase + '_step2.2.complete')
 #else:
 #        if not os.path.isfile(os.path.join(os.getcwd(), outputDir, fasta_base + '_hmmerParsed.results')):
 #                benchparse.benchparse(args, outputDir, fasta_base)
 
-if not os.path.isfile(outputBase + '_domCut.fasta'):
+if not os.path.isfile(outputBase + '_step2.3.complete'):
         hmmerCoordDict = domfind.hmmer_coord_parse(outputBase + '_hmmerParsed.results')
         domfind.coord_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
+        create_blank_file(outputBase + '_step2.3.complete')
 
 ### RUN SIGNALP
 verbose_print(args.verbose, '# Step 3/9: SignalP prediction')
-if not os.path.isfile(outputBase + '_signalp.fasta'):
+if not os.path.isfile(outputBase + '_step3.complete'):
         if not os.path.isfile(outputBase + '_signalp.results'):
                 domfind.run_signalp(args.signalpdir, '', args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)     # Blank '' is where args.cygwindir would go if this code were Windows-compatible
         sigpPredDict = domfind.parse_sigp_results(outputBase + '_signalp.results')
         domfind.coord_cutter(outputBase + '_domCut.fasta', sigpPredDict, outputBase + '_signalp.fasta')
+        create_blank_file(outputBase + '_step3.complete')
         sigpPredDict = None
 
 ### RUN SEG AND COILS
 verbose_print(args.verbose, '# Step 4/9: LCR & coils prediction')
-if not os.path.isfile(outputBase + '_segcoils.fasta'):
+if not os.path.isfile(outputBase + '_step4.1.complete'):
         if not os.path.isfile(outputBase + '_seg.fasta'):
                 domfind.run_seg(args.segdir, args.outdir, chunkFiles, outputBase + '_seg.fasta')
         segPredDict = domfind.parse_seg_results(outputBase + '_seg.fasta')
+
         if not os.path.isfile(outputBase + '_coils.results'):
                 domfind.run_coils(args.coilsdir, args.python2dir, chunkFiles, outputBase + '_coils.results')
         coilsPredDict = domfind.parse_coils_results(outputBase + '_coils.results', chunkFiles)
+
         segCoilsDict = coord_dict_merge(segPredDict, coilsPredDict)
         domfind.coord_cutter(outputBase + '_signalp.fasta', segCoilsDict, outputBase + '_segcoils.fasta')
+        create_blank_file(outputBase + '_step4.1.complete')
 
 # BENCHMARK
 #if args['benchmark'] == 'y':
 #        benchparse.reject_novelty(args, outputDir, fasta_base)
 
 ### FINAL PREP CLEAN-UP
-if not os.path.isfile(outputBase + '_clean.fasta'):
+if not os.path.isfile(outputBase + '_step4.2.complete'):
         domfind.clean_seqs(outputBase + '_segcoils.fasta', args.cleanAA, outputBase + '_clean.fasta')
+        create_blank_file(outputBase + '_step4.2.complete')
 
 #### MMSEQS2 OPERATIONS
 
 ### MAKE MMSEQS2 DB
 verbose_print(args.verbose, '# Step 5/9: Make MMseqs2 database')
 tmpdir = os.path.join(args.outdir, 'mms2tmp')
-if not os.path.isdir(tmpdir):
-        os.mkdir(tmpdir)        # If MMseqs2 still has errors with resuming runs I can add an else condition to delete and recreate the tmpdir; I believe they fixed this error at some point, however
-
-if not os.path.isfile(outputBase + '_clean.fasta_queryDB'):
+if not os.path.isfile(outputBase + '_step5.complete'):
+        if not os.path.isdir(tmpdir):
+                os.mkdir(tmpdir)                # If MMseqs2 still has errors with resuming runs I can add an else condition to delete and recreate the tmpdir; I believe they fixed this error at some point, however
         domfind.makemms2db(args.mmseqs2dir, outputBase + '_clean.fasta', None, 'query')
-
-if index_exists(fastaBase + '_clean.fasta_queryDB', args.outdir) == False:      # This function can cause problems when running with Cygwin, hopefully they fix this error in later versions, otherwise I'll need to add a platform check and skip indexing for Windows only; this isn't ideal for resuming runs, but it's better than nothing
-        domfind.indexmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, args.threads, 'query')
+        
+        if platform.system() != 'Windows':      # Currently, MMseqs2 on Cygwin cannot perform database indexing; when this changes I will unlock this section for Windows
+                domfind.indexmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, args.threads, 'query')
+        create_blank_file(outputBase + '_step5.complete')
 
 ### RUN MMSEQS2
-verbose_print(args.verbose, '# Step 6/9: MMseqs2 sequence-sequence alignment')
-if not os.path.isfile(outputBase + '_mmseqs2SEARCH'):
-        params = [args.mms2eval, args.threads, 4, 7, 0]
+verbose_print(args.verbose, '# Step 6/9: MMseqs2 all-against-all alignment')
+if not os.path.isfile(outputBase + '_step6.complete'):
+        params = [args.mms2eval, args.threads, 4, 7, 0] # Params refer to [E-value, threads, iteration number, sensitivity, alt alignments]; parameters relating to MMseqs2 algorithm performance are hard-coded since we should never want to make this less strict; once alt alignments are enabled for profile iteration, I'll change this
         domfind.runmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', params)
-if not os.path.isfile(outputBase + '_mmseqs2SEARCH.m8'):
         domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', args.threads)
+        create_blank_file(outputBase + '_step6.complete')
 
 ### PARSE MMSEQS2
 verbose_print(args.verbose, '# Step 7/9: Parse MMseqs2 output')
-if not os.path.isfile(outputBase + '_unclustered_domains.fasta'):
+if not os.path.isfile(outputBase + '_step7.complete'):
         unprocessedArrays = domfind.parsemms2tab_to_array(outputBase + '_mmseqs2SEARCH.m8', outputBase + '_cdhit.fasta', args.cleanAA)
         # Exit condition if we found nothing
         if unprocessedArrays == {}:
-                print('No potential novel domain regions were found from MMseqs2. Program end.')
+                print('No potential novel domain regions were found from MMseqs2.')
+                verbose_print(args.verbose, '### PROGRAM END ###')
+                verbose_print(args.verbose, time.ctime())
                 quit()
-        coordDict = domfind.parsemms2_peaks(unprocessedArrays)
+        # Parse tabular output file for potential domain regions
+        coordDict = domfind.parse_array_peaks(unprocessedArrays, args.cleanAA)
         domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+        create_blank_file(outputBase + '_step7.complete')
 
 #### DOMAIN CLUSTERING
 verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
@@ -688,6 +707,7 @@ iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
 noClust = False
 enteredMain = False
+
 # Main loop
 if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
         enteredMain = True      # This lets us recognise if we actually entered this loop; if we didn't, all the results have been generated so we won't perform the shutil operations below
@@ -703,7 +723,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 else:
                         # HDBSCAN clustering
                         matrix1, matrix2, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, args.alf)
-                        groupDict = domclust.cluster_hdb(False, False, 2, 1, matrix1, matrix2, idList)  # TESTING: Params are hard coded
+                        groupDict = domclust.cluster_hdb(False, False, 2, 1, matrix1, matrix2, idList)  # TESTING: Params are hard coded [Leaf, single_clust, min_size, min_sample...]
                 if groupDict == None:
                         noClust = True
                         break
@@ -747,7 +767,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
 
 # Provide informative loop exit text
 if noClust == True:
-        print('No clusters were identifed.')
+        print('No clusters were discovered during CANDID iteration.')
 elif enteredMain == False:
         print('CANDID output files already exist in this directory; move or delete these to perform CANDID iteration again.')
 else:
@@ -763,6 +783,6 @@ else:
         shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
         verbose_print(args.verbose, 'Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
         verbose_print(args.verbose, 'Individual domain alignments can be found in "' + tmpDir + '".')
-        
+
 verbose_print(args.verbose, '### PROGRAM END ###')
 verbose_print(args.verbose, time.ctime())

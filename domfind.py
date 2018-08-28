@@ -568,7 +568,7 @@ def runmms2(mmseqs2dir, query, target, tmpdir, searchName, params):
         else:
                 dbname2 = query + '_queryDB'
         cmd = os.path.join(mmseqs2dir, 'mmseqs') + ' search "' + dbname1 + '" "' + dbname2 + '" "' + searchName + '" "' + tmpdir + '" -e {} --threads {} --num-iterations {} -s {} --alt-ali {}'.format(*params)
-        print(cmd)
+        print('#' + cmd)
         # Run query
         run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
         mms2out, mms2err = run_mms2.communicate()
@@ -626,7 +626,7 @@ def parsemms2tab_to_array(mms2Table, fastaFile, lowLenCutoff):
                                                 seqArrays[line[1]][i] += 1
         return seqArrays
 
-def parsemms2_peaks(seqArrays):
+def parse_array_peaks(seqArrays, minPlateauSize):
         # Setup
         import math
         import numpy as np
@@ -639,11 +639,9 @@ def parsemms2_peaks(seqArrays):
                 for i in range(len(plateaus)):
                         covCutoff = math.ceil(coverages[i] * covRatio)
                         # Look back
-                        ongoingCount = 0                        # This measures how long our extension is so we can apply the two arbitrary values when appropriate
                         prevCov = array[plateaus[i][0]]
                         newStart = plateaus[i][0]
                         for x in range(plateaus[i][0]-1, -1, -1):
-                                ongoingCount += 1
                                 indexCov = array[x]
                                 # Increasing check
                                 if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
@@ -651,16 +649,15 @@ def parsemms2_peaks(seqArrays):
                                 # Decreasing cut-off
                                 if indexCov >= covCutoff:
                                         newStart = x
+                                        prevCov = indexCov
                                         continue
                                 else:
                                         break
                         plateaus[i][0] = newStart
                         # Look forward
-                        ongoingCount = 0
                         prevCov = array[plateaus[i][1]]
                         newEnd = plateaus[i][1]
                         for x in range(plateaus[i][1]+1, len(array)):
-                                ongoingCount += 1
                                 indexCov = array[x]
                                 # Increasing check
                                 if indexCov > prevCov:  # This means we're leading up to another peak, and should stop extending this plateau
@@ -668,37 +665,53 @@ def parsemms2_peaks(seqArrays):
                                 # Decreasing cut-off
                                 if indexCov >= covCutoff:
                                         newEnd = x
+                                        prevCov = indexCov
                                         continue
                                 else:
                                         break
                         plateaus[i][1] = newEnd
                 return plateaus
-
-        def plateau_chain(array, plateaus, coverages, covRatio):
-                for i in range(len(plateaus)-1):                        # S=start,E=end,A=array... I use 'depress' here to refer to the 'depression' in the coverage array (i.e., we're going away from a peak so it will be decreasing)
-                        depressS = plateaus[i][1] + 1                   # +1 to look at the first position AFTER the peak i.e., the first base of the depression
-                        depressE = plateaus[i+1][0] -1                  # -1 to look at the first position BEFORE the next peak i.e., the last base of the depression
-                        depressA = array[depressS:depressE + 1]
-                        # Use covRatio to determine if chaining is correct
-                        maxVal = max([coverages[i], coverages[i+1]])    # We determine chaining based on the highest coverage plateau for a few reasons. Most importantly, the higher coverage plateau is most likely to be a real domain, so we should prioritise it and make sure it doesn't join to lower coverage regions unless they meet our arbitrary chaining limits
-                        cutoff = math.ceil(maxVal * covRatio)           # We round up to handle low numbers properly. For example, 2*0.5=1.0. We don't need to round this, and 1.0 is good here if depressL<= cleanAA. However, 2*0.75=1.5. Rounding down would be 1, but this would mean we chain probably separate domains together incorrectly. Thus, by rounding up, we are more strict.
-                        belowCutoff = np.where(depressA < cutoff)
-                        if len(belowCutoff[0]) > 0:                     # We don't chain these two plateaus together if we have any positions with less coverage than our cutoff/have regions with no coverage
-                                continue                                
-                        else:
-                                # Overwrite previous plateaus/coverages values to produce redundancy
-                                plateaus[i] = [plateaus[i][0], plateaus[i+1][1]]        # We can clean up redundancy later rather than dealing with the consequences of deletion during this loop
-                                plateaus[i+1] = [plateaus[i][0], plateaus[i+1][1]]
-                                coverages[i] = maxVal                                   # It's important that we make coverages == maxVal since this will prevent us from chaining plateaus together in steps (e.g., 5 coverage plateau merges with a 4 cov, then that 4 cov merges with a 3, etc.)
-                                coverages[i+1] = maxVal
+        
+        def plateau_chain_seeds(array, plateaus, coverages, covRatio):
+                # Sort plateaus based on coverages
+                plateaus = [x for _,x in sorted(zip(coverages,plateaus), key=lambda pair: -pair[0])]            # https://stackoverflow.com/questions/6618515/sorting-list-based-on-values-from-another-list
+                coverages.sort(reverse = True)                                                                  # We don't need to do any fancy sorting for coverages, any duplicates will sit where they should
+                # Perform pairwise comparison loop to merge plateaus on the basis of coverage
+                for y in range(len(plateaus)-1):
+                        z = y + 1
+                        while True:
+                                # Exit condition
+                                if z >= len(plateaus):                                  # len(plateaus)-1 would correspond to the final entry, this means we've gone at least one step further beyond
+                                        break
+                                # Extract depression details;                           # S=start,E=end,A=array... I use 'depression' to refer to dips in the coverage array (i.e., we're going away from a peak so it will be decreasing)
+                                depressS = min(plateaus[y][1], plateaus[z][1]) + 1      # Since we know these values should never overlap, this provides a way to determine the 'gap'/'depression' region between the peaks; +1 to look at the first position AFTER the peak i.e., the first base of the depression
+                                depressE = max(plateaus[y][0], plateaus[z][0]) - 1      # -1 to look at the first position BEFORE the next peak i.e., the last base of the depression
+                                depressA = array[depressS:depressE + 1]
+                                # Use covRatio to determine if chaining is correct
+                                maxVal = max([coverages[y], coverages[z]])              # We determine chaining based on the highest coverage plateau for a few reasons. Most importantly, the higher coverage plateau is most likely to be a real domain, so we should prioritise it and make sure it doesn't join to lower coverage regions unless they meet our arbitrary chaining limits
+                                cutoff = math.ceil(maxVal * covRatio)                   # We round up to handle low numbers properly. For example, 2*0.5=1.0. We don't need to round this, and 1.0 is good here if depressL<= cleanAA. However, 2*0.75=1.5. Rounding down would be 1, but this would mean we chain probably separate domains together incorrectly. Thus, by rounding up, we are more strict.
+                                belowCutoff = np.where(depressA < cutoff)
+                                aboveMax = np.where(depressA > maxVal)
+                                if len(belowCutoff[0]) > 0 or len(aboveMax[0]) > 0:     # We don't chain these two plateaus together if we have any positions with less coverage than our cutoff/have regions with no coverage OR if we have a peak inbetween the two plateaus we are currently comparing
+                                        z += 1
+                                else:
+                                        #print('AYY')
+                                        # Merge this pair's plateaus/coverages values
+                                        plateaus[y] = [min(plateaus[y][0], plateaus[z][0]), max(plateaus[y][1], plateaus[z][1])]
+                                        coverages[y] = maxVal                                   # It's important that we make coverages == maxVal since this will prevent us from chaining plateaus together in steps (e.g., 5 coverage plateau merges with a 4 cov, then that 4 cov merges with a 3, etc.)
+                                        del plateaus[z]
+                                        del coverages[z]
+                # Unsort coverages based on plateaus & return
+                coverages = [x for _,x in sorted(zip(plateaus,coverages), key=lambda pair: pair[0])]
+                plateaus.sort() 
                 return plateaus, coverages
-
-        def one_based_index_fix(coords):        # This is necessary since we're going back from working with 0-based numpy arrays to a 1-based BLAST-like format
+        
+        def one_based_index_fix(coords):
                 for i in range(len(coords)):
                         coords[i][0] += 1
                         coords[i][1] += 1
                 return coords
-
+        
         # Main function
         for key, vlist in seqArrays.items():
                 # Check if we got any hits
@@ -718,7 +731,7 @@ def parsemms2_peaks(seqArrays):
                 for maximum in maxindices:
                         index = maximum[0]
                         coverage = maximum[1]
-                        # Look forward                          # The peakdetect.peakdet values are always at the start of the plateau, so we don't need to look back, we just need to look forward to find where the plateau ends]
+                        # Look forward                          # The peakdet values are always at the start of the plateau, so we don't need to look back, we just need to look forward to find where the plateau ends]
                         plat = None
                         for i in range(index, len(array)):
                                 if array[i] == coverage:
@@ -732,26 +745,23 @@ def parsemms2_peaks(seqArrays):
                         coverages.append(coverage)
                 # Chain and clean up multiple plateaus
                 if len(plateaus) > 1:
-                        plateaus, coverages = plateau_chain(array, plateaus, coverages, covRatio)
-                        while True:
-                                overlap = 'n'
-                                for y in range(len(plateaus)-1):        # Plateaus should always maintain its sorting so we can process it in pairwise steps
-                                        if plateaus[y+1][0] > plateaus[y][1]:
-                                                continue
-                                        elif plateaus[y+1][0] == plateaus[y][1]:
-                                                plateaus[y] = [plateaus[y][0], plateaus[y+1][1]]
-                                                del plateaus[y+1]
-                                                del coverages[y+1]
-                                                overlap = 'y'
-                                                break
-                                        else:
-                                                print('This should never happen. Something is wrong with the algorithm.')
-                                                stopplateauclean
-                                if overlap == 'n':          # Exit condition if we make it through the 'for y' loop without encountering any overlaps
-                                        break
+                        plateaus, coverages = plateau_chain_seeds(array, plateaus, coverages, covRatio)
                 # Extend plateaus following slightly modified chaining rules and add to our domDict for later output generation
                 plateaus = plateau_extens(array, plateaus, coverages, covRatio)
-                plateaus = one_based_index_fix(plateaus)
+                plateaus = one_based_index_fix(plateaus)        # This is necessary since we're going back from working with 0-based numpy arrays to a 1-based BLAST-like format
+                # Ensure the algorithm is working properly [TESTING: Can be stripped out once I'm sure the algorithm is solid, it'll just slow things down otherwise]
+                for i in range(len(plateaus)-1):
+                        if plateaus[i][1] > plateaus[i+1][0] and plateaus[i+1][1] > plateaus[i][0]:
+                                print('parse_array_peaks: Algorithm problem, this should never happen')
+                                print(plateaus)
+                                print(coverages)
+                                print(vlist)
+                # Remove plateaus that do not meet minimum length cut-off
+                for i in range(len(plateaus)-1, -1, -1):
+                        platLen = plateaus[i][1] - plateaus[i][0] + 1           # +1 since [100,100] is a plateau with length of 1
+                        if platLen < minPlateauSize:
+                                del plateaus[i]
+                # Add to main dictionary
                 domDict[key] = plateaus
         return domDict
 
