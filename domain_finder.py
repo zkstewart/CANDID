@@ -31,29 +31,28 @@ def validate_args(args):
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
         # Validate program execution is successful
-        if True:       ## TESTING
-                program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
-                program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
-                program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
-                program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
-                program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
-                program_execution_check(os.path.join(args.segdir, 'seg'))
-                if args.hammockdir != '':
-                        program_execution_check(os.path.join(args.javadir, 'java -h'))
-                        program_execution_check(os.path.join(args.javadir, 'java') + ' -jar ' + os.path.join(args.hammockdir, 'Hammock.jar -h'))
-                program_execution_check(os.path.join(args.python2dir, 'python -h'))
-                python_version_check(args.python2dir)
-                program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
-                if platform.system() == 'Windows':      # I'm going to leave this in the code since it doesn't hurt, and if I can get this to be Windows-compatible in the future it'll all be here waiting
-                        program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
-                if platform.system() == 'Windows':
-                        cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
-                else:
-                        program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
-                if platform.system() == 'Windows':
-                        cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
-                else:
-                        program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
+        program_execution_check(os.path.join(args.mmseqs2dir, 'mmseqs -h'))
+        program_execution_check(os.path.join(args.cdhitdir, 'cd-hit -h'))
+        program_execution_check(os.path.join(args.hmmer3dir, 'hmmpress -h'))
+        program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
+        program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
+        program_execution_check(os.path.join(args.segdir, 'seg'))
+        if args.hammockdir != '':
+                program_execution_check(os.path.join(args.javadir, 'java -h'))
+                program_execution_check(os.path.join(args.javadir, 'java') + ' -jar ' + os.path.join(args.hammockdir, 'Hammock.jar -h'))
+        program_execution_check(os.path.join(args.python2dir, 'python -h'))
+        python_version_check(args.python2dir)
+        program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
+        if platform.system() == 'Windows':      # I'm going to leave this in the code since it doesn't hurt, and if I can get this to be Windows-compatible in the future it'll all be here waiting
+                program_execution_check(os.path.join(args.cygwindir, 'bash.exe --version'))
+        if platform.system() == 'Windows':
+                cygwin_program_execution_check(args.outdir, args.cygwindir, args.mafftdir, 'mafft.bat -h')
+        else:
+                program_execution_check(os.path.join(args.mafftdir, 'mafft -h'))
+        if platform.system() == 'Windows':
+                cygwin_program_execution_check(args.outdir, args.cygwindir, args.signalpdir, 'signalp -h')
+        else:
+                program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
         # Validate integer arguments
         intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA']
         for entry in intArgs:
@@ -412,6 +411,12 @@ another operating system.
 IMPORTANT: Note that any directories referred to in this program should
 NOT include any spaces in their name (e.g., 'output directory' must be
 'output_directory'), and that HMMER version 3.1 or above is required.
+----
+One last tip: if you place a file called 'CANDID_exit_marker' within
+the output directory during CANDID iteration, once the end of an iteration
+occurs the program will end and produce output normally. This may be
+useful if it takes longer than you anticipated for convergence to
+occur and you are willing to take whatever is available.
 """
 
 # Allow hidden options in arg parsing
@@ -538,8 +543,8 @@ p.add_argument("-numiters", dest="numiters", type = int,
                   no new domains are found.""" if showHiddenArgs else argparse.SUPPRESS)
 # Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
 p.add_argument("-cleanAA", dest="cleanAA", type = int,
-                  help="""This value acts as a 'magic number' for many operations; it is based on 30AA being the expected minimum length
-                  of a true domain. This value is not intended to be changed; experienced users may wish to do so, however."""
+                  help="""This value acts as a 'magic number' for many operations; the default recommended value (30) is based on 30AA being
+                  the expected minimum length of a true domain. This value is not intended to be changed; experienced users may wish to do so, however."""
                   if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = False,                  # We leave command-line only values as False
                   help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED."
@@ -599,7 +604,7 @@ if not os.path.isfile(outputBase + '_step1.complete'):
         create_blank_file(outputBase + '_step1.complete')
 
 ### CHUNK CD-HIT FOR THREADING
-#chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
+chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
 
 ### RUN HMMER3
 verbose_print(args.verbose, '# Step 2/9: HMMER non-novel domain prediction')
@@ -690,7 +695,7 @@ if not os.path.isfile(outputBase + '_step7.complete'):
                 quit()
         # Parse tabular output file for potential domain regions
         coordDict = domfind.parse_array_peaks(unprocessedArrays, args.cleanAA)
-        domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+        domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta', args.cleanAA)   # This minimum size specification (cleanAA) should have no impact here since it's also enforced on the above line
         create_blank_file(outputBase + '_step7.complete')
 
 #### DOMAIN CLUSTERING
@@ -707,6 +712,7 @@ iterate = 0
 loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
 noClust = False
 enteredMain = False
+earlyExit = False
 
 # Main loop
 if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
@@ -715,6 +721,9 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 # Optional exit condition based on loop count
                 if loopCount > args.numiters and args.numiters != 0:
                         break
+                # Optional exit condition based on user providing early exit signal
+                if earlyExit == True:
+                        break
                 # Clustering step
                 if args.hammockdir != '' and args.alf == 'hammock':
                         # Hammock clustering
@@ -722,8 +731,8 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
                 else:
                         # HDBSCAN clustering
-                        matrix1, matrix2, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, args.alf)
-                        groupDict = domclust.cluster_hdb(False, False, 2, 1, matrix1, matrix2, idList)  # TESTING: Params are hard coded [Leaf, single_clust, min_size, min_sample...]
+                        matrixList, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, args.alf)
+                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, args.minsize, args.minsample, matrixList, idList)
                 if groupDict == None:
                         noClust = True
                         break
@@ -736,9 +745,12 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         if i >= len(groupDict):
                                 break
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
-                        msaObj = domclust.msa_trim(msaFileName, 0.4, 0.5, 'obj', msaFileName)   # Values are arbitrary, unlikely to need user-modification; 0.4 means we'll trim up to the point where 40% of the sequence's have a base present in a single column, 0.5 means we will only trim it maximally up to 50% of the sequence length - if we need to trim it more than that to reach our 40% goal, we won't trim it at all
-                        alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
-                        if alignCheck == False:
+                        msaObj = domclust.msa_trim(msaFileName, 0.4, 0.5, 'obj', msaFileName, 'drop')           # Values are arbitrary, unlikely to need user-modification; 0.4 means we'll trim up to the point where 40% of the sequence's have a base present in a single column, 0.5 means we will only trim it maximally up to 50% of the sequence length - if we need to trim it more than that to reach our 40% goal, we'll drop the whole msa
+                        if msaObj != None:                                                                      # Line above: True here means we will drop individual sequences that don't "fit" the alignment; 'drop' specifies the behaviour to drop this alignment, returning None
+                                alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
+                        else:
+                                alignCheck = False
+                        if alignCheck == False :
                                 groupDict = dict_entry_delete(groupDict, i)
                                 align_files_rename(tmpDir, i, 'Domain_', '_align.fasta')
                         else:
@@ -756,14 +768,17 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         changes = domclust.coord_dict_compare(coordDict, prevCoordDict)
                         if changes == True:
                                 iterate = 0
-                                print('Something changed')
+                                print('# ITER' + str(loopCount) + ': Something changed')
                         else:
                                 iterate += 1
-                                print('Nothing changed')        # If this happens once, it will happen twice from current testing; change behaviour if this holds true on larger test sets
+                                print('# ITER' + str(loopCount) + ': Nothing changed')          # If this happens once, it will happen twice from current testing; change behaviour if this holds true on larger test sets
                 prevCoordDict = copy.deepcopy(coordDict)        # Hold onto this for comparison
                 # Extract new unclustered domains
-                domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta')
+                domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta', args.cleanAA)   # Specifying the minimum size (cleanAA) here means we won't extract small regions from our HMMER table
                 loopCount += 1
+                # Extra exit condition for if you change your mind about wanting to wait for convergence; check for file which indicates exit
+                if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
+                        earlyExit = True
 
 # Provide informative loop exit text
 if noClust == True:
@@ -774,6 +789,8 @@ else:
         print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
         if loopCount > args.numiters and args.numiters != 0:
                 print('This occurred after the maximum iteration limit was reached.')
+        elif earlyExit == True:
+                print('This occurred after an exit marker file was detected within the output directory.')
         else:
                 print('This occurred after no new domain regions were able to be found.')
         

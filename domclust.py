@@ -32,6 +32,62 @@ def protein_alphabet_reduce(proteinList, reduceNum):
                 proteinList = proteinList[0]
         return proteinList
 
+def alfree_matrix_threaded(fastaFile, reduceNum, alfAlgorithm, threads):        # Likely not going to use this, but dont wan't to throw it away just yet
+        # Set up
+        import threading
+        from alfpy import word_pattern, word_vector, word_distance
+        from alfpy.utils import seqrecords, distmatrix
+        from alfpy.utils.data import seqcontent
+        # Define function for threading
+        def run_alf(seqList, lengthList, idList, wordSize, alfAlgorithm, matrixList):
+                p = word_pattern.create(seqList, word_size=num)
+                if alfAlgorithm == 'canberra':
+                        weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
+                        counts = word_vector.CountsWeight(lengthList, p, weightmodel)
+                else:
+                        counts = word_vector.Counts(lengthList, p)
+                dist = word_distance.Distance(counts, alfAlgorithm)
+                matrixList.append(distmatrix.create(idList, dist))
+        
+        # Read in unclustered domains file
+        unclustDoms = open(fastaFile)
+        records = seqrecords.read_fasta(unclustDoms)
+        unclustDoms.close()
+        # Extract details from records using alfpy-provided functions
+        seqList = records.seq_list
+        lengthList = records.length_list
+        idList = records.id_list
+        # Optional reduction of protein alphabet
+        seqList = protein_alphabet_reduce(seqList, reduceNum)
+        # Compute distance matrix for word sizes
+        matrix = []
+        processing_threads = []
+        wordSizes = [2,1]       ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
+        for num in wordSizes:
+                p = word_pattern.create(seqList, word_size=num)
+                if alfAlgorithm == 'canberra':
+                        weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
+                        counts = word_vector.CountsWeight(lengthList, p, weightmodel)
+                else:
+                        counts = word_vector.Counts(lengthList, p)
+                dist = word_distance.Distance(counts, alfAlgorithm)
+                matrix.append(distmatrix.create(idList, dist))
+        
+        
+        
+        for num in wordSizes:
+                if threads > 1:
+                        build = threading.Thread(target=run_alf, args=(seqList, lengthList, idList, num, alfAlgorithm, matrix))
+                        processing_threads.append(build)
+                        build.start()
+        
+                        # Wait for all threads to end.
+                        for process_thread in processing_threads:
+                                process_thread.join()
+        
+        # Return value
+        return matrix[0], matrix[1], idList
+
 def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
         # Set up
         from alfpy import word_pattern, word_vector, word_distance
@@ -48,8 +104,9 @@ def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
         # Optional reduction of protein alphabet
         seqList = protein_alphabet_reduce(seqList, reduceNum)
         # Compute distance matrix for word sizes
-        matrix = []
-        for num in [2, 1]:      ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
+        matrices = []           # Currently I'm not returning multiple matrices; I'll change this if I decide to only use wordsize 1 or 2
+        wordSizes = [2]       ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
+        for num in wordSizes:
                 p = word_pattern.create(seqList, word_size=num)
                 if alfAlgorithm == 'canberra':
                         weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
@@ -57,11 +114,11 @@ def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
                 else:
                         counts = word_vector.Counts(lengthList, p)
                 dist = word_distance.Distance(counts, alfAlgorithm)
-                matrix.append(distmatrix.create(idList, dist))
+                matrices.append(distmatrix.create(idList, dist))
         # Return value
-        return matrix[0], matrix[1], idList
+        return matrices, idList
 
-def cluster_hdb(leaf, singleClust, minSize, minSample, matrix1, matrix2, idList):
+def cluster_hdb(leaf, singleClust, minSize, minSample, matrixList, idList):
         # Set up
         import hdbscan
         groupDicts = []
@@ -75,9 +132,9 @@ def cluster_hdb(leaf, singleClust, minSize, minSample, matrix1, matrix2, idList)
         else:
                 allowSingle = False
         # Run clustering algorithm for both word size matrices
-        for matrix in [matrix1, matrix2]:       # TESTING WORD SIZE 1 FIRST
+        for matrix in matrixList:                               # This lets us possibly feed in multiple matrices; currently I'm not doing that since it doesn't seem to really help all too much
                 clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = clustSelect, min_cluster_size = int(minSize), min_samples = int(minSample), allow_single_cluster = allowSingle)
-                clusterer.fit(matrix.data) 
+                clusterer.fit(matrix.data)
                 # Pull out domain groups
                 clust_groups = clusterer.labels_
                 #clust_probs = clusterer.probabilities_
@@ -91,22 +148,24 @@ def cluster_hdb(leaf, singleClust, minSize, minSample, matrix1, matrix2, idList)
                                 else:
                                         groupDict[clust_groups[i]].append(idList[i])
                 groupDicts.append(groupDict)
-        # Merge word size matrices together
-        oldVals = []
-        ongoingCount = 0
-        for val in groupDicts[0].values():
-                oldVals += val
-        for key, value in groupDicts[1].items():
-                skip = False
-                for val in value:
-                        if val in oldVals:
-                                skip = True
-                                break
-                if skip == True:
-                        continue
-                else:
-                        groupDicts[0][ongoingCount + len(groupDicts[0])] = value
-                        ongoingCount += 1
+        # Merge word size matrices together if relevant
+        if len(groupDicts) > 1:
+                oldVals = []
+                origLen = len(groupDicts[0])
+                ongoingCount = 0
+                for val in groupDicts[0].values():
+                        oldVals += val
+                for key, value in groupDicts[1].items():
+                        skip = False
+                        for val in value:
+                                if val in oldVals:
+                                        skip = True
+                                        break
+                        if skip == True:
+                                continue
+                        else:
+                                groupDicts[0][ongoingCount + origLen] = value
+                                ongoingCount += 1
         return groupDicts[0]
 
 def tmpdir_setup(tmpDir):
@@ -192,7 +251,7 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
         for process_thread in processing_threads:
                 process_thread.join()
 
-def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
+def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop, skipOrDrop):
         '''msaFastaIn is the path to the aligned MSA FASTA file to be trimmed
         pctTrim refers to the minimum proportion of sequences present in a single column to demarcate the start and end of an alignment
         minLength refers to the minimum length of a MSA after trimming before we decide to not trim at all; if this value is less than 1, we assume it's a ratio, otherwise it is an absolute length.
@@ -200,7 +259,7 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
         msaFastaOut is only relevant when outType == file; otherwise it will be ignored
         '''
         # Set up
-        import os
+        import os, copy
         from Bio import AlignIO
         from Bio.Seq import Seq
         from Bio.Alphabet import SingleLetterAlphabet
@@ -225,8 +284,30 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
                 print('msa_trim: minLength must be greater than 0.')
                 print('Format this correctly and try again.')
                 quit()
+        # Process indivSeqDrop and ensure it is sensible
+        if indivSeqDrop != None:
+                try:
+                        float(indivSeqDrop)
+                        if not 0 <= float(indivSeqDrop) <= 1:
+                                print('msa_trim: indivSeqDrop appears to be a float, but it is not a value from 0 to 1.')
+                                print('Format this correctly and try again.')
+                                quit()
+                        indivSeqDrop = float(indivSeqDrop)
+                except:
+                        print('msa_trim: indivSeqDrop was not specified as None, but is also not capable of conversion to float.')
+                        print('Format this correctly and try again.')
+                        quit()
+        # Process skipOrDrop and ensure it is sensible
+        if skipOrDrop.lower() not in ['skip', 'drop']:
+                print('msa_trim: skipOrDrop must equal "skip" or "drop"; I don\'t recognise ' + skipOrDrop + '.')
+                print('Format this correctly and try again.')
+                quit()
         # Load in fasta file as MSA object
         msa = AlignIO.read(msaFastaIn, 'fasta')
+        # Optionally remove sequences that don't appear to "fit" the alignment [i.e., contain a lot of gaps] according to user-specified gap proportion cut-off
+        if indivSeqDrop != None:
+                ## TO-DO: Copy the msa above, make edits in here based on indivSeqDrop, change return for skips to original msa, and return for normal to this msa 
+                
         # Loop through aligned columns and find the first position from the 5' end that meets our pctTrim value 
         for i in range(len(msa[0].seq)):
                 col = msa[:,i]
@@ -242,20 +323,32 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut):
                         continue
                 break
         # Check our values to ensure they're sensible
-        if i >= x:
-                print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value; no columns contain this proportion of sequences!')
-                return msa      # If the user isn't expecting a returned object this should just disappear; if they want a file out, we won't modify it
+        if i >= x:      # If i >= x, that means we'd be trimming the sequence to 1bp or a negative value; in other words, we can't trim it at this pctTrim as printed below
+                if skipOrDrop.lower() == 'skip':
+                        print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; no trimming will be performed.')
+                        return msa              # If the user isn't expecting a returned object this should just disappear; if they want a file out, we won't modify it
+                elif skipOrDrop.lower() == 'drop':
+                        print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; msa will be dropped.')
+                        return None
         # Compare our MSA length post-trimming to our specified cut-offs to determine whether we're doing anything to this sequence or not
         seqLen = x - i          # This works out fine in 1-based notation
         if minLength < 1:
                 ratio = seqLen / len(msa[0])
                 if ratio < minLength:
-                        print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; no trimming will be performed.')
-                        return msa      # We're not going to make any changes if trimming shortens it too much
+                        if skipOrDrop.lower() == 'skip':
+                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; no trimming will be performed.')
+                                return msa      # We're not going to make any changes if trimming shortens it too much
+                        elif skipOrDrop.lower() == 'drop':
+                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; msa will be dropped.')
+                                return None
         else:
                 if seqLen < minLength:
-                        print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; no trimming will be performed.')
-                        return msa      # As above
+                        if skipOrDrop.lower() == 'skip':
+                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; no trimming will be performed.')
+                                return msa      # As above
+                        elif skipOrDrop.lower() == 'drop':
+                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; msa will be dropped.')
+                                return None
         # Trim our MSA object
         for y in range(len(msa)):       # Don't overwrite i from above! I made this mistake...
                 msa[y].seq = Seq(str(msa[y].seq)[i:x], SingleLetterAlphabet())
