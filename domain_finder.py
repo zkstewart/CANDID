@@ -615,7 +615,7 @@ if not os.path.isfile(outputBase + '_step2.1.complete'):
 if not args.benchmark:
         if not os.path.isfile(outputBase + '_step2.2.complete'):
                 domDict = domfind.hmmer_parse_domfind(outputBase + '_cdhit_hmmer.results', args.hmmeval, args.skip)
-                domfind.hmmer_dict_to_file(domDict, outputBase + '_hmmerParsed.results')
+                domtblout_handling.hmmer_output_func(domDict, outputBase + '_hmmerParsed.results')
                 domDict = None
                 create_blank_file(outputBase + '_step2.2.complete')
 #else:
@@ -623,7 +623,7 @@ if not args.benchmark:
 #                benchparse.benchparse(args, outputDir, fasta_base)
 
 if not os.path.isfile(outputBase + '_step2.3.complete'):
-        hmmerCoordDict = domfind.hmmer_coord_parse(outputBase + '_hmmerParsed.results')
+        hmmerCoordDict = domtblout_handling.hmmer_coord_reparse(outputBase + '_hmmerParsed.results', None, True)        # None means we aren't using E-value cutoff - we've already enforced one earlier; True means we want to merge overlapping coords together
         domfind.coord_cutter(outputBase + '_cdhit.fasta', hmmerCoordDict, outputBase + '_domCut.fasta')
         create_blank_file(outputBase + '_step2.3.complete')
 
@@ -738,19 +738,20 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         break
                 # Alignment steps
                 domclust.tmpdir_setup(tmpDir)
-                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict) # We choose not to use the alignments Hammock presents since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
-                # Cluster curation steps
+                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict, 'localpair')         # We choose not to reuse the alignments Hammock presents (if we are running Hammock) since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
+                # Cluster curation steps                                                                                                                                        # Also, we're specifying for MAFFT to use localpair alignment; this should be ideal since L-INS-i assumes a single alignment domain which should be true
                 i = 0
                 while True:
                         if i >= len(groupDict):
                                 break
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
-                        msaObj = domclust.msa_trim(msaFileName, 0.4, 0.5, 'obj', msaFileName, 'drop')           # Values are arbitrary, unlikely to need user-modification; 0.4 means we'll trim up to the point where 40% of the sequence's have a base present in a single column, 0.5 means we will only trim it maximally up to 50% of the sequence length - if we need to trim it more than that to reach our 40% goal, we'll drop the whole msa
-                        if msaObj != None:                                                                      # Line above: True here means we will drop individual sequences that don't "fit" the alignment; 'drop' specifies the behaviour to drop this alignment, returning None
+                        msaObj = domclust.msa_trim(msaFileName, 0.7, 0.25, 'both', msaFileName, 0.5, 'drop')    # Values are arbitrary, unlikely to need user-modification; 0.7 means we'll trim up to the point where 70% of the sequence's have a base present in a single column, 0.25 means we will only trim it maximally up to 25% remaining of the sequence length - if we need to trim it more than that to reach our 70% goal, we'll drop the whole msa
+                        if msaObj != None:                                                                      # Line above: 0.5 here means we will drop individual sequences that don't "fit" the alignment if they are more than 50% gap sequence; 'drop' specifies the behaviour to drop this alignment, returning None; finally, we specify 'both' to both return a msa object and write the modified alignment to file
                                 alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
+                                ## TO-DO: Outlier detection
                         else:
                                 alignCheck = False
-                        if alignCheck == False :
+                        if alignCheck == False:
                                 groupDict = dict_entry_delete(groupDict, i)
                                 align_files_rename(tmpDir, i, 'Domain_', '_align.fasta')
                         else:
@@ -762,7 +763,16 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
                 domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
-                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov)
+                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, False)     # We specify False here since we don't want to merge coords; they shouldn't overlap, anyway [##TESTING: Validate this is true]
+                # Compare coords against known domain model coords to prevent rediscovery of known domains
+                try:
+                        hmmerCoordDict                                                                                                  # If we're running the program in a single go, or we are reiterating, we will already have produced this value
+                except:
+                        hmmerCoordDict = domtblout_handling.hmmer_coord_reparse(outputBase + '_hmmerParsed.results', None, True)        # If we're resuming a run or on our first loop, we'll want to reobtain this value
+                coordDict = domclust.coord_lists_overlap_cull(hmmerCoordDict, coordDict, 0.10)                                          # Value is arbitrary; this function will remove any coord from coordDict if it overlaps a coord in hmmerCoordDict by >= 10% in either direction
+                if coordDict == {}:
+                        noClust = True
+                        break
                 # Compare clusters to see if anything changed
                 if loopCount != 0:
                         changes = domclust.coord_dict_compare(coordDict, prevCoordDict)
@@ -779,6 +789,9 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 # Extra exit condition for if you change your mind about wanting to wait for convergence; check for file which indicates exit
                 if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
                         earlyExit = True
+
+## TO-DO: Compare output table and find novel clusters that regularly overlap positions; consider merging their MSAs
+
 
 # Provide informative loop exit text
 if noClust == True:

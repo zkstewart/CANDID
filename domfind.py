@@ -143,7 +143,7 @@ def coord_cutter(fastaFile, coordDict, outputFileName):
                                         currSeq = currSeq[0:coord[0]-1] + ('x' * (coord[1] + 1 - coord[0])) + currSeq[coord[1]:]        # -1 to coord[0] to make it 0-based; +1 to coord[1] since a domain range of 1-1 still has a length of 1;
                                 outFile.write('>' + seqName + '\n' + currSeq + '\n')
 
-def fasta_domain_extract(coordDict, fastaFile, outputFileName):
+def fasta_domain_extract(coordDict, fastaFile, outputFileName, minSize):
         # Setup
         from Bio import SeqIO
         # Load input file
@@ -159,9 +159,15 @@ def fasta_domain_extract(coordDict, fastaFile, outputFileName):
                                 continue
                         seq = str(record.seq)
                         ranges = coordDict[seqid]
+                        ongoingCount = 1
                         for i in range(len(ranges)):
+                                # Minimum size cut-off enforcement
+                                if ranges[i][1] - ranges[i][0] + 1 < minSize:
+                                        continue
+                                # Extract sequence
                                 tmpDomain = seq[ranges[i][0]-1:ranges[i][1]]
-                                fileOut.write('>' + record.description + '_Domain_' + str(i+1) + '_' + str(ranges[i][0]) + '-' + str(ranges[i][1]) + '\n' + tmpDomain + '\n')
+                                fileOut.write('>' + record.description + '_Domain_' + str(ongoingCount) + '_' + str(ranges[i][0]) + '-' + str(ranges[i][1]) + '\n' + tmpDomain + '\n')
+                                ongoingCount += 1
 
 ### CD-HIT
 def run_cdhit(cdhitDir, outputDir, inputFasta, outputFasta, params):
@@ -239,64 +245,6 @@ def hmmer_parse_domfind(domtbloutFile, evalueCutoff, skip):
                         else:
                                 domDict[pid].append([did, dstart, dend, evalue])
         return domDict
-
-def hmmer_dict_to_file(domDict, outputFileName):
-        with open(outputFileName, 'w') as fileOut:
-                for key, value in domDict.items():
-                        for domregion in value:
-                                fileOut.write(key + '\t' + str(domregion[1]) + '\t' + str(domregion[2]) + '\t' + domregion[0] + '\n')
-
-def hmmer_coord_parse(parsedHmmerFile):
-        # Set up
-        from itertools import groupby
-        # Declare function integral to this function
-        def coord_merge(coordList, coord):
-                # Merge the new coord into the current coordList
-                merged = 'n'
-                if coord != None:
-                        for i in range(len(coordList)):
-                                pair1 = coordList[i]
-                                pair2 = coord
-                                # Detect overlap
-                                if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
-                                        # Merge coords
-                                        start = min([pair1[0], pair2[0]])
-                                        end = max([pair1[1], pair2[1]])
-                                        coordList[i] = [start, end]
-                                        merged = 'y'
-                                        break
-                # If we didn't merge this coord into an existing one, add it into the list
-                if merged == 'n' and coord != None:
-                        coordList.append(coord)
-                # If we did merge it, re-process the coordList to merge anything else that needs it
-                else:
-                        for x in range(len(coordList)-1,-1,-1):
-                                if x != 0:
-                                        pair1 = coordList[x]
-                                        pair2 = coordList[x-1]
-                                        # Detect overlap
-                                        if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
-                                                # Merge coords
-                                                start = min([pair1[0], pair2[0]])
-                                                end = max([pair1[1], pair2[1]])
-                                                coordList[x-1] = [start, end]
-                                                # Cull entry
-                                                del coordList[x]
-                # Sort coordList and return
-                coordList.sort()
-                return coordList
-        # Main function
-        hmmerDict = {}
-        grouper = lambda x: x.split('\t')[0]
-        with open(parsedHmmerFile, 'r') as fileIn:
-                for key, group in groupby(fileIn, grouper):
-                        coords = []
-                        for line in group:
-                                sl = line.rstrip('\r\n').split('\t')
-                                coord_merge(coords, [int(sl[1]), int(sl[2])])
-                        # Retain results for subsequent cutting in a dictionary
-                        hmmerDict[key] = coords
-        return hmmerDict
 
 ### SIGNALP (Loads in CD-HIT results for running program, then modifies HMMER3 cut results)
 def run_signalp(signalpdir, cygwindir, outputDir, outputFileName, organism, fileNames):
@@ -695,7 +643,6 @@ def parse_array_peaks(seqArrays, minPlateauSize):
                                 if len(belowCutoff[0]) > 0 or len(aboveMax[0]) > 0:     # We don't chain these two plateaus together if we have any positions with less coverage than our cutoff/have regions with no coverage OR if we have a peak inbetween the two plateaus we are currently comparing
                                         z += 1
                                 else:
-                                        #print('AYY')
                                         # Merge this pair's plateaus/coverages values
                                         plateaus[y] = [min(plateaus[y][0], plateaus[z][0]), max(plateaus[y][1], plateaus[z][1])]
                                         coverages[y] = maxVal                                   # It's important that we make coverages == maxVal since this will prevent us from chaining plateaus together in steps (e.g., 5 coverage plateau merges with a 4 cov, then that 4 cov merges with a 3, etc.)

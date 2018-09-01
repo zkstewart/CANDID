@@ -118,6 +118,8 @@ def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
         # Return value
         return matrices, idList
 
+## Consider https://hdbscan.readthedocs.io/en/latest/api.html for detecting outliers via all_points_mutual_reachability
+
 def cluster_hdb(leaf, singleClust, minSize, minSample, matrixList, idList):
         # Set up
         import hdbscan
@@ -183,13 +185,19 @@ def tmpdir_setup(tmpDir):
         else:
                 os.mkdir(tmpDir)
 
-def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict):
+def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict, algorithm):
         # Set up
         import os, threading, math
         from Bio import SeqIO
         from Bio.Align.Applications import MafftCommandline
+        # Ensure that algorithm value is sensible
+        if algorithm != None:   # If this is None, we'll just use default MAFFT
+                if algorithm.lower() not in ['genafpair', 'localpair', 'globalpair']:
+                        print('mafft_align: algorithm option must be an option in the below list. Fix this parameter and try again.')
+                        print(['genafpair', 'localpair', 'globalpair'])
+                        quit()
         # Define functions integral to this one
-        def run_mafft(mafftdir, outputDir, prefix, suffix, fastaFile, startNum, endNum, thread):
+        def run_mafft(mafftdir, outputDir, prefix, suffix, fastaFile, startNum, endNum, thread, algorithm):
                 # Set up
                 import platform
                 for i in range(startNum, endNum):
@@ -206,10 +214,16 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
                         # Run MAFFT
                         if platform.system() == 'Windows':
                                 mafft_cline = MafftCommandline(os.path.join(mafftdir, 'mafft.bat'), input=tmpName)
-                                stdout, stderr = mafft_cline()
                         else:
                                 mafft_cline = MafftCommandline(os.path.join(mafftdir, 'mafft'), input=tmpName)
-                                stdout, stderr = mafft_cline()
+                        if algorithm != None:
+                                if algorithm.lower() == 'genafpair':
+                                        mafft_cline.genafpair = True
+                                elif algorithm.lower() == 'localpair':
+                                        mafft_cline.localpair = True
+                                elif algorithm.lower() == 'globalpair':
+                                        mafft_cline.globalpair = True
+                        stdout, stderr = mafft_cline()
                         if stdout == '':
                                 raise Exception('MAFFT error text below' + str(stderr))
                         # Process MAFFT output
@@ -242,7 +256,7 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
         processing_threads = []
         ongoingCount = 0
         for start, end in chunkPoints:
-                build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, prefix, suffix, fastaFile, start, end, ongoingCount+1))
+                build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, prefix, suffix, fastaFile, start, end, ongoingCount+1, algorithm))
                 processing_threads.append(build)
                 build.start()
                 ongoingCount += 1
@@ -254,22 +268,23 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
 def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop, skipOrDrop):
         '''msaFastaIn is the path to the aligned MSA FASTA file to be trimmed
         pctTrim refers to the minimum proportion of sequences present in a single column to demarcate the start and end of an alignment
-        minLength refers to the minimum length of a MSA after trimming before we decide to not trim at all; if this value is less than 1, we assume it's a ratio, otherwise it is an absolute length.
-        outType influences whether this function returns a Biopython MSA object ("obj") or an output file ("file")
-        msaFastaOut is only relevant when outType == file; otherwise it will be ignored
+        minLength refers to the minimum length of a MSA after trimming before we decide to not trim at all; if this value is less than 1,
+        we assume it's a ratio, otherwise it is an absolute length. outType influences whether this function returns a Biopython MSA object
+        ("obj") or an output file ("file") msaFastaOut is only relevant when outType == file; otherwise it will be ignored
         '''
         # Set up
         import os, copy
         from Bio import AlignIO
         from Bio.Seq import Seq
         from Bio.Alphabet import SingleLetterAlphabet
+        from Bio.Align import MultipleSeqAlignment
         # Ensure outType is sensible
-        if outType.lower() not in ['obj', 'file']:
+        if outType.lower() not in ['obj', 'file', 'both']:
                 print('msa_trim: This function requires an outType to be specified with a specific format.')
-                print('Your provided value "' + outType + '" should instead be "obj", to return the Biopython MSA object, or "file" to produce an output file which uses the string provided as msaFastaOut.')
+                print('Your provided value "' + outType + '" should instead be "obj", to return the Biopython MSA object, "file" to produce an output file which uses the string provided as msaFastaOut, or "both" to do both aforementioned things.')
                 print('Format this correctly and try again.')
                 quit()
-        if outType.lower() == 'file' and not type(msaFastaOut) == str:
+        if (outType.lower() == 'file' or outType.lower() == 'both') and not type(msaFastaOut) == str:
                 print('msa_trim: You specified a file output but did\'nt provide a string for msaFasta out - the file output name.')
                 print('Format this correctly and try again.')
                 quit()
@@ -304,11 +319,7 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
                 quit()
         # Load in fasta file as MSA object
         msa = AlignIO.read(msaFastaIn, 'fasta')
-        # Optionally remove sequences that don't appear to "fit" the alignment [i.e., contain a lot of gaps] according to user-specified gap proportion cut-off
-        if indivSeqDrop != None:
-                ## TO-DO: Copy the msa above, make edits in here based on indivSeqDrop, change return for skips to original msa, and return for normal to this msa 
-                
-        # Loop through aligned columns and find the first position from the 5' end that meets our pctTrim value 
+        # Loop through aligned columns and find the first position from the 5' end that meets our pctTrim value
         for i in range(len(msa[0].seq)):
                 col = msa[:,i]
                 pctBases = 1 - (col.count('-') / len(col))
@@ -350,15 +361,41 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
                                 print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; msa will be dropped.')
                                 return None
         # Trim our MSA object
+        origMsa = copy.deepcopy(msa)    # Since we're going to be making changes to the msa from here on but still might want to return the unedited msa, we need to create a backup
+        newMsa = MultipleSeqAlignment([])
         for y in range(len(msa)):       # Don't overwrite i from above! I made this mistake...
                 msa[y].seq = Seq(str(msa[y].seq)[i:x], SingleLetterAlphabet())
-        # Return results either as the MSA object or as an output file
-        if outType.lower() == 'obj':
-                return msa
-        else:
+                # Optionally remove sequences that don't appear to "fit" the alignment [i.e., contain a lot of gaps] according to user-specified gap proportion cut-off
+                if indivSeqDrop != None:
+                        gapCount = str(msa[y].seq).count('-')
+                        gapProp = gapCount / len(msa[y].seq)
+                        if gapProp > indivSeqDrop:
+                                continue
+                        newMsa.append(msa[y])
+        # If we dropped sequences, make sure we don't have any blank columns now
+        if indivSeqDrop != None and len(newMsa) > 1:
+                for a in range(len(newMsa[0].seq), 0, -1):
+                        col = newMsa[:,a-1]
+                        if set(col) == {'-'}:
+                                for b in range(len(newMsa)):
+                                        newMsa[b].seq = Seq(str(newMsa[b].seq)[0:a-1] + str(newMsa[b].seq)[a:], SingleLetterAlphabet())
+        # If we dropped sequences, ensure that our newMsa still has more than one entry in it
+        if indivSeqDrop != None:
+                if len(newMsa) < 2:
+                        if skipOrDrop.lower() == 'skip':
+                                print('"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; no trimming will be performed.')
+                                return origMsa
+                        elif skipOrDrop.lower() == 'drop':
+                                print('"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; msa will be dropped.')
+                                return None
+                msa = newMsa
+        # Return results either as the MSA object, as an output file, or as both
+        if outType.lower() == 'file' or outType.lower() == 'both':
                 with open(msaFastaOut, 'w') as fileOut:
                         for row in msa:
                                 fileOut.write('>' + row.description + '\n' + str(row.seq) + '\n')
+        if outType.lower() == 'obj' or outType.lower() == 'both':
+                return msa
 
 def msa_score(msa, scoringMethod, cutoff):
         # Set up
@@ -426,55 +463,104 @@ def msa_score(msa, scoringMethod, cutoff):
         else:
                 return False
 
-def testing_stuff():
+def msa_outlier_detect(msa, pairwiseMatrix, cutoff):
+        # Set up
         import os
         from Bio import AlignIO
-        scoringMethod = 'sp'
-        # Define functions integral to this one
-        def blosum_score(pair):
-                # Set up
-                from Bio.SubsMat import MatrixInfo
-                blosum = MatrixInfo.blosum62    # blosum62 seems to be the most commonly used matrix, I'll lean on consensus w/r/t which one is probably best here
-                # Make sure pair is formatted correctly
-                pair = (pair[0].upper(), pair[1].upper())
-                if pair not in blosum:
-                        pair = tuple(reversed(pair))
-                # Return the score
-                return blosum[pair]
+        import Bio.Align
+        # Determine what input we are receiving
+        if type(msa) == Bio.Align.MultipleSeqAlignment:
+                fileType = 'obj'
+        elif type(msa) == str:
+                if not os.path.isfile(msa):
+                        print('msa_outlier_detect: You\'ve provided a string input but it isn\'t detected as a file.')
+                        print('Did you type the file name correctly, or do you need to provide the full path to it? Fix your input and try again.')
+                        quit()
+                fileType = 'file'
+        else:
+                print('msa_outlier_detect: You\'ve provided an input type I am not compatible with.')
+                print('The input should be a Bio.Align.MultipleSeqAlignment object or a string indicating the file location. Fix your input and try again.')
+                quit()
+        # If we're working with a file input, load it as an obj
+        if fileType == 'file':
+                msa = AlignIO.read(msa, 'fasta')
+        ## TESTING
+        msa = AlignIO.read(r'D:\Project_Files\Scripting_related\Domain_Finding\exaiptest\tmp_alignments\Domain_8_align.fasta', 'fasta')
+        #msa = AlignIO.read(r'D:\Project_Files\Scripting_related\Domain_Finding\exaiptest\tmp_alignments\Domain_7_align.fasta', 'fasta')
+        # Format our pairwiseMatrix for retrieving details; note that pairwiseMatrix is expected to the formatted by alfpy
+        idList = pairwiseMatrix.id_list
+        distTable = pairwiseMatrix.format().split('\n')
+        del distTable[0]    # This is an empty header
+        for i in range(len(distTable)):
+                distTable[i] = distTable[i].split(' ')
+        # Loop through msa rows and, with reference to matrix, extract their pairwise distances to other sequences
+        pairDist = []
+        for i in range(len(msa)):
+                seqId = msa[i].id
+                seqInd = idList.index(seqId)
+                pairDist.append([])
+                for x in range(len(msa)):
+                        if x == i:
+                                pairDist[-1].append(0.00)
+                                continue
+                        otherSeqId = msa[x].id
+                        otherSeqInd = idList.index(otherSeqId)
+                        # Find the distance between these two sequences and add to our list
+                        pairDist[-1].append(float(distTable[seqInd][otherSeqInd+1]))    # +1 since the first entry in each row is the sequence ID itself
+        
+        ## TESTING - SP score for HDBSCAN cluster
         def sumpairs_score(pair):
                 if pair[0].upper() == pair[1].upper():
                         return 1
                 else:
                         return 0
-        fastaFiles = []
-        for file in os.listdir('/home/lythl/Desktop/CANDID/newtest/tmp_alignments'):
-                if file.endswith('.fasta'):
-                        fastaFiles.append(file)
-        for fasta in fastaFiles:
-                scoringMethod = 'sp'
-                msa = AlignIO.read(os.path.join('/home/lythl/Desktop/CANDID/newtest/tmp_alignments', fasta), 'fasta')
-                overallScores = []
-                for i in range(len(msa[0].seq)):
-                        col = msa[:,i]
-                        colScores = []
-                        # Column scores based on possible pairs exclusive of '-'
-                        for x in range(len(col)-1):
-                                for y in range(x+1, len(col)):
-                                        pair = (col[x].upper(), col[y].upper())
+        def pairwise_sumpairs_matrix(msa):
+                spScore = []
+                for a in range(len(msa)):
+                        spScore.append([])
+                        for b in range(len(msa)):
+                                if a == b:
+                                        spScore[-1].append(0.00)
+                                        continue
+                                colScores = []
+                                gapCount = 0
+                                for i in range(len(msa[a].seq)):
+                                        pair = (msa[a][i], msa[b][i])
                                         if pair[0] != '-' and pair[1] != '-':
-                                                if scoringMethod == 'blosum':
-                                                        colScores.append(blosum_score(pair))
-                                                elif scoringMethod == 'sp':
-                                                        colScores.append(sumpairs_score(pair))
+                                                colScores.append(sumpairs_score(pair))
                                         else:
-                                                continue
-                        # Average column score with penalty for gaps
-                        if colScores != []:
-                                colScore = (sum(colScores) / len(colScores)) * (1 - (col.count('-') / len(col)))
-                        else:
-                                colScore = 0    # If there is only a single letter, it receives no score
-                        overallScores.append(colScore)
-                print(sum(overallScores) / len(overallScores))
+                                                gapCount += 1
+                                # Average column score with penalty for gaps
+                                if colScores != []:
+                                        #colScore = 1 - (sum(colScores) / len(colScores)) * (1 - (gapCount / len(msa[a])))
+                                        colScore = 1 - (sum(colScores) / len(colScores))
+                                else:
+                                        colScore = 1
+                                spScore[-1].append(colScore)
+                return spScore
+        
+        ## TESTING - Cluster with HDBSCAN to identify outliers
+        import numpy as np
+        import hdbscan
+        pwdm = np.array(pairDist)
+        
+        allowSingle = True
+        clustSelect = 'eom'
+        minSize = 2
+        minSample = 2
+        
+        clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = clustSelect, min_cluster_size = int(minSize), min_samples = int(minSample), allow_single_cluster = allowSingle)
+        #clusterer.fit(pwdm)
+        spScore = pairwise_sumpairs_matrix(msa)
+        spdm = np.array(spScore)
+        clusterer.fit(spdm)
+        clust_groups = clusterer.labels_
+        
+        ## TESTING
+        meanDists = []
+        for entry in pairDist:
+                new = sorted(list(entry))[:-1]
+                meanDists.append(sum(new) / len(new))
 
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
@@ -563,6 +649,51 @@ def coord_lists_merge(coordLists, offsetNum):   # offsetNum lets us specify incr
         # Sort coordList and return
         coordList.sort()
         return coordList
+
+def coord_lists_overlap_cull(coordDict1, coordDict2, ovlPropCutoff):    # In this function, coordDict1 is the static value used for comparison. coordList2 is what we are culling overlaps from using ovlPropCutoff as our criteria.
+        # Ensure ovlPropCutoff is sensible
+        try:
+                ovlPropCutoff = float(ovlPropCutoff)
+        except:
+                print('coord_lists_overlap_cull: ovlPropCutoff needs to be a float or capable of conversion to float')
+                print('Fix your input and try again.')
+                quit()
+        if not 0 <= ovlPropCutoff <= 1:
+                print('coord_lists_overlap_cull: ovlPropCutoff needs to be a float from 0 -> 1.')
+                print('Fix your formatting and try again.')
+                quit()
+        # Loop through coordDict2 and find overlaps
+        for key, value2 in coordDict2.items():
+                if key not in coordDict1:
+                        continue
+                value1 = coordDict1[key] # I'm trying to keep consistent names; value1 comes from coordDict1
+                # Compare all pairs from the lists of coords
+                i = 0
+                while True:
+                        dropped = False
+                        if i >= len(value2):
+                                break
+                        for x in range(len(value1)):
+                                pair1 = value1[x]
+                                pair2 = value2[i]
+                                if pair1[1] >= pair2[0] and pair2[1] >= pair1[0]:
+                                        minTail = min(pair1[1], pair2[1])
+                                        maxStart = max(pair1[0], pair2[0])
+                                        ovlLen = minTail - maxStart + 1     # When we know two ranges overlap, minTail (end portion of range) - maxStart gives our overlap length; +1 to offset 1-based stuff since 100-1 == length of 100
+                                        ovlProp1 = ovlLen / (pair1[1] - pair1[0] + 1)
+                                        ovlProp2 = ovlLen / (pair2[1] - pair2[0] + 1)
+                                        if ovlProp1 >= ovlPropCutoff or ovlProp2 >= ovlPropCutoff:
+                                                del value2[i]
+                                                dropped = True
+                                                break
+                        if dropped == False:
+                                i += 1
+        # Delete empty dict keys now
+        for key in list(coordDict2.keys()):
+                if coordDict2[key] == []:
+                        del coordDict2[key]
+        return coordDict2
+                
 
 def thread_file_name_gen(prefix, threadNum):
         import os

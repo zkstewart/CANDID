@@ -466,9 +466,14 @@ def hmmer_full_reparse(parsedFile, evalueCutoff, baseExtract):  # This version o
                         domDict[sl[0]] = domList
         return domDict
 
-def hmmer_coord_reparse(parsedFile, evalueCutoff):      # This version of the function will return a list of coords as values associated with sequence IDs as keys
+def hmmer_coord_reparse(parsedFile, evalueCutoff, merge):      # This version of the function will return a list of coords as values associated with sequence IDs as keys; evalueCutoff can == None which means we won't enforce E-value cut-off
         # Set up
         coordDict = {}                            # We need to use a dictionary for later sorting since hmmsearch does not produce output that is ordered in the way we want to work with. hmmscan does, but it is SIGNIFICANTLY slower.
+        # Ensure merge value is sensible
+        if merge != None and type(merge) != bool:
+                print('hmmer_coord_reparse: I don\'t recognise the merge argument; it should be None, True, or False, not ' + str(merge) + '.')
+                print('Format this correctly and try again.')
+                quit()
         # Main function
         with open(parsedFile, 'r') as fileIn:
                 for line in fileIn:
@@ -485,16 +490,54 @@ def hmmer_coord_reparse(parsedFile, evalueCutoff):      # This version of the fu
                                 for i in range(len(info)):
                                         info[i] = info[i].strip("'[]")
                                 # Skip entries if evalue is not significant
-                                if float(info[3]) > float(evalueCutoff):
-                                        continue
+                                if evalueCutoff != None:
+                                        if float(info[3]) > float(evalueCutoff):
+                                                continue
                                 # Store any good results
                                 domList.append([int(info[1]), int(info[2])])
                         # Add into domain dictionary
                         coordDict[sl[0]] = domList
+        # Optional ability to merge coordDict entries together at this point
+        if merge == True:
+                for key, value in coordDict.items():
+                        coordDict[key] = coord_lists_merge(value, 0)
         return coordDict
 
+# Helper function for above
+def coord_lists_merge(coordLists, offsetNum):           # offsetNum lets us specify increased stringency for overlaps; this is useful if we don't want 1 coord overlaps to cause merging
+        # Ensure that coordLists is formatted correctly; we expect a list of list of pairs, but the user may input just a list of pairs
+        if type(coordLists[0][0]) == int:
+                coordLists = [coordLists]
+        # Dump all coords into a single list
+        coordList = []
+        for entry in coordLists:
+                coordList += entry
+        coordList.sort()
+        # Process the list to merge overlaps 
+        for y in range(len(coordList)-1):
+                z = y + 1
+                while True:
+                        # Exit condition
+                        if z >= len(coordList):         # len(coordList)-1 would correspond to the final entry, this means we've gone at least one step further beyond
+                                break
+                        # Detect overlap
+                        pair1 = coordList[y]
+                        pair2 = coordList[z]
+                        if pair1[1] >= pair2[0] + offsetNum and pair2[1] >= pair1[0] + offsetNum:
+                                # Merge coords
+                                start = min([pair1[0], pair2[0]])
+                                end = max([pair1[1], pair2[1]])
+                                coordList[y] = [start, end]
+                                # Cull entry
+                                del coordList[z]
+                        else:
+                                z += 1
+        # Sort coordList and return
+        #coordList.sort()
+        return coordList
+
 ## Output functions
-def output_func(inputDict, outputFileName):
+def hmmer_output_func(inputDict, outputFileName):
         with open(outputFileName, 'w') as fileOut:
                 for key, value in inputDict.items():
                         fileOut.write(key + '\t' + '\t'.join(list(map(str, value))) + '\n')
@@ -550,7 +593,7 @@ def handle_domtblout(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect,
 
         # Generate output
         if hmmdbScript == False:
-                output_func(finalDict, outputFileName)
+                hmmer_output_func(finalDict, outputFileName)
         else:
                 hmmdb_output_func(finalDict, dom_prefixes, outputFileName, ovlCutoff)
 
