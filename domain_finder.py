@@ -37,6 +37,7 @@ def validate_args(args):
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
         program_execution_check(os.path.join(args.segdir, 'seg'))
+        program_execution_check(os.path.join(args.rscriptdir, 'Rscript'))
         if args.hammockdir != '':
                 program_execution_check(os.path.join(args.javadir, 'java -h'))
                 program_execution_check(os.path.join(args.javadir, 'java') + ' -jar ' + os.path.join(args.hammockdir, 'Hammock.jar -h'))
@@ -108,7 +109,7 @@ def program_execution_check(cmd):
                 quit()
 
 def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
-        import subprocess
+        import subprocess, os
         # Format script for cygwin execution
         scriptText = os.path.join(exeDir, exeFile)
         scriptFile = file_name_gen('tmpscript', '.sh')
@@ -181,7 +182,7 @@ def default_parameter_dict(inputKey):
         function, or the user specified all necessary arguments on the command-line (which we'll check shortly)
         '''
         defaultParams = {'threads': 1, 'mmseqs2dir': '', 'cdhitdir': '',
-                         'hmmer3dir': '', 'signalpdir': '', 'segdir': '',
+                         'hmmer3dir': '', 'signalpdir': '', 'segdir': '', 'rscriptdir': '',
                          'cygwindir': '', 'javadir': '', 'mafftdir': '', 'cdc': 0.4,
                          'cdn': 2, 'cdg': 0, 'cdas': 0.9, 'cdal': 0.6, 'cdm': 1000,
                          'signalporg': 'euk', 'hmmeval': 1e-1, 'hmmevalnov': 1e-1,
@@ -448,6 +449,8 @@ p.add_argument("-sigpdir", dest="signalpdir", type = str,
                   help="Specify the directory where signalp executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-segdir", dest="segdir", type = str,
                   help="Specify the directory where seg executables are located. If this is already in your PATH, you can leave this blank.")
+p.add_argument("-rdir", dest="rscriptdir", type = str,
+                  help="Specify the R directory that contains Rscript.exe. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-mafftdir", dest="mafftdir", type = str,
                   help="Specify the directory where the mafft executables on a Unix system or .bat file on a Windows is located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-py2dir", dest="python2dir", type = str,
@@ -739,7 +742,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 # Alignment steps
                 domclust.tmpdir_setup(tmpDir)
                 domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict, 'localpair')         # We choose not to reuse the alignments Hammock presents (if we are running Hammock) since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
-                # Cluster curation steps                                                                                                                                        # Also, we're specifying for MAFFT to use localpair alignment; this should be ideal since L-INS-i assumes a single alignment domain which should be true
+                # Cluster curation: trim and remove excessively gappy sequences                                                                                                                                       # Also, we're specifying for MAFFT to use localpair alignment; this should be ideal since L-INS-i assumes a single alignment domain which should be true
                 i = 0
                 while True:
                         if i >= len(groupDict):
@@ -748,7 +751,6 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         msaObj = domclust.msa_trim(msaFileName, 0.7, 0.25, 'both', msaFileName, 0.5, 'drop')    # Values are arbitrary, unlikely to need user-modification; 0.7 means we'll trim up to the point where 70% of the sequence's have a base present in a single column, 0.25 means we will only trim it maximally up to 25% remaining of the sequence length - if we need to trim it more than that to reach our 70% goal, we'll drop the whole msa
                         if msaObj != None:                                                                      # Line above: 0.5 here means we will drop individual sequences that don't "fit" the alignment if they are more than 50% gap sequence; 'drop' specifies the behaviour to drop this alignment, returning None; finally, we specify 'both' to both return a msa object and write the modified alignment to file
                                 alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
-                                ## TO-DO: Outlier detection
                         else:
                                 alignCheck = False
                         if alignCheck == False:
@@ -759,6 +761,15 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 if groupDict == {}:
                         noClust = True
                         break
+                # Cluster curation: detect and remove outlier sequences [We need to separate this from the above since we need to run it all in a single go as calling rScript and loading in packages for each individual sequence is too time consuming]
+                msaFileNameList = []
+                for i in range(len(groupDict)):
+                        msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
+                        msaFileNameList.append(msaFileName)
+                odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # TESTING: values are arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
+                spOutResults = domclust.msa_outlier_detect(msaFileNameList, True)                                                       # True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
+                mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)
+                ## TO-DO: Use outlier results to modify MSAs
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))

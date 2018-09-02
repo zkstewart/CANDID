@@ -285,7 +285,7 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
                 print('Format this correctly and try again.')
                 quit()
         if (outType.lower() == 'file' or outType.lower() == 'both') and not type(msaFastaOut) == str:
-                print('msa_trim: You specified a file output but did\'nt provide a string for msaFasta out - the file output name.')
+                print('msa_trim: You specified a file output but didn\'t provide a string for msaFasta out - the file output name.')
                 print('Format this correctly and try again.')
                 quit()
         # Process minLength and ensure it is sensible
@@ -463,52 +463,131 @@ def msa_score(msa, scoringMethod, cutoff):
         else:
                 return False
 
-def msa_outlier_detect(msa, pairwiseMatrix, cutoff):
+def odseq_outlier_detect(msaFileNameList, rScriptDir, tmpDir, threshold, distMetric, bootStraps):
         # Set up
-        import os
-        from Bio import AlignIO
-        import Bio.Align
-        # Determine what input we are receiving
-        if type(msa) == Bio.Align.MultipleSeqAlignment:
-                fileType = 'obj'
-        elif type(msa) == str:
-                if not os.path.isfile(msa):
-                        print('msa_outlier_detect: You\'ve provided a string input but it isn\'t detected as a file.')
-                        print('Did you type the file name correctly, or do you need to provide the full path to it? Fix your input and try again.')
-                        quit()
-                fileType = 'file'
-        else:
-                print('msa_outlier_detect: You\'ve provided an input type I am not compatible with.')
-                print('The input should be a Bio.Align.MultipleSeqAlignment object or a string indicating the file location. Fix your input and try again.')
+        import os, subprocess, pathlib
+        ## Ensure input parameters are sensible
+        # rScriptDir
+        if rScriptDir == None:
+                rScriptDir = ''         # We'll assume rScript is locatable in PATH if unspecified
+        elif rScriptDir != '' and not (os.path.isfile(os.path.join(rScriptDir, 'Rscript.exe')) or os.path.isfile(os.path.join(rScriptDir, 'Rscript'))):
+                print('odseq_outlier_detect: rScriptDir does not appear to contain the Rscript file.')
+                print('Fix your input and try again.')
                 quit()
-        # If we're working with a file input, load it as an obj
-        if fileType == 'file':
-                msa = AlignIO.read(msa, 'fasta')
-        ## TESTING
-        msa = AlignIO.read(r'D:\Project_Files\Scripting_related\Domain_Finding\exaiptest\tmp_alignments\Domain_8_align.fasta', 'fasta')
-        #msa = AlignIO.read(r'D:\Project_Files\Scripting_related\Domain_Finding\exaiptest\tmp_alignments\Domain_7_align.fasta', 'fasta')
-        # Format our pairwiseMatrix for retrieving details; note that pairwiseMatrix is expected to the formatted by alfpy
-        idList = pairwiseMatrix.id_list
-        distTable = pairwiseMatrix.format().split('\n')
-        del distTable[0]    # This is an empty header
-        for i in range(len(distTable)):
-                distTable[i] = distTable[i].split(' ')
-        # Loop through msa rows and, with reference to matrix, extract their pairwise distances to other sequences
-        pairDist = []
-        for i in range(len(msa)):
-                seqId = msa[i].id
-                seqInd = idList.index(seqId)
-                pairDist.append([])
-                for x in range(len(msa)):
-                        if x == i:
-                                pairDist[-1].append(0.00)
-                                continue
-                        otherSeqId = msa[x].id
-                        otherSeqInd = idList.index(otherSeqId)
-                        # Find the distance between these two sequences and add to our list
-                        pairDist[-1].append(float(distTable[seqInd][otherSeqInd+1]))    # +1 since the first entry in each row is the sequence ID itself
-        
-        ## TESTING - SP score for HDBSCAN cluster
+        # tmpDir
+        if tmpDir == None:
+                tmpDir = '.'            # We'll just put the file in the current directory if it isn't specified
+        elif tmpDir != '' and not os.path.isdir(tmpDir):
+                print('odseq_outlier_detect: tmpDir is not an existing directory or not able to be located.')
+                print('Fix your input and try again.')
+                quit()
+        # threshold
+        try:
+                threshold = float(threshold)
+        except:
+                print('odseq_outlier_detect: threshold needs to be a float or capable of conversion to float.')
+                print('Fix your input and try again.')
+                quit()
+        # distMetric
+        if distMetric.lower() not in ['linear', 'affine']:
+                print('odseq_outlier_detect: distMetric needs to be an option available in the list below. Fix your input and try again.')
+                print(['linear', 'affine'])
+                quit()
+        # bootStraps
+        try:
+                bootStraps = int(bootStraps)
+        except:
+                print('odseq_outlier_detect: bootStraps needs to be an integer or capable of conversion to integer.')
+                print('Fix your input and try again.')
+                quit()
+        # msaFileNameList
+        if type(msaFileNameList) == str:
+                msaFileNameList = [msaFileNameList]
+        elif type(msaFileNameList) != list:
+                print('odseq_outlier_detect: msaFileNameList type is not recognisable. It should be a list, but instead it is ' + str(type(msaFileNameList)) + '.')
+                print('Fix your input and try again.')
+                quit()
+        if msaFileNameList == []:
+                print('odseq_outlier_detect: msaFileNameList is empty. I don\'t know what to do in this situation since it shouldn\'t happen.')
+                print('Code your call to this function properly to skip it.')
+                quit()
+        # Ensure that the msaFileNames are locatable
+        ongoingCount = 0
+        for fileName in msaFileNameList:
+                if not os.path.isfile(fileName):
+                        print('odseq_outlier_detect: index ' + str(ongoingCount) + ' in msaFileNameList is not able to be located. You might need to specify the full path to the file.')
+                        print('Fix your input and try again.')
+                        quit()
+                msaFileNameList[ongoingCount] = os.path.abspath(fileName)
+                ongoingCount += 1
+        # Create script file
+        scriptText = ['library("msa")', 'library("odseq")']
+        for fileName in msaFileNameList:
+                fileName = pathlib.Path(fileName).as_posix()    # TESTING: Never used pathlib before, make sure this is correct
+                scriptText.append('filename = "' + fileName + '"')
+                scriptText.append('alig <- readAAMultipleAlignment(filename)')
+                scriptText.append('y <- odseq(alig, threshold = {}, distance_metric = "{}", B = {})'.format(threshold, distMetric.lower(), bootStraps))
+                scriptText.append('print(filename)')
+                scriptText.append('print(y)')
+        scriptFile = file_name_gen(os.path.join(tmpDir, 'tmp_odseq_script'), '.R')
+        with open(scriptFile, 'w') as fileOut:
+                fileOut.write('\n'.join(scriptText))
+        # Format cmd
+        cmd = '"' + os.path.join(rScriptDir, 'Rscript') + '" ' + scriptFile
+        run_odseq = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        odseqout, odseqerr = run_odseq.communicate()
+        odseqout = odseqout.decode("utf-8")
+        if 'FALSE' not in odseqout or 'TRUE' not in odseqout:   # rScript writes module loading details to stderr so we need to check that it worked properly in other ways
+                raise Exception('rScript ODseq error text below' + str(odseqerr.decode("utf-8")))
+        # Parse ODseq results
+        odseqTable = odseqout.split('[1]')
+        if odseqTable[0] == '':
+                del odseqTable[0]
+        odseqDict = {}
+        for i in range(len(odseqTable)):
+                # Extract the chunk of information from this ODseq result
+                chunk = odseqTable[i].split('\n')
+                del chunk[0]    # We don't need the filename line anymore; printing it was useful enough to give us something to split by
+                if chunk[-1] == '':
+                        del chunk[-1]
+                # Assemble the boolean results in a list [Note that this is an ordered list which corresponds to the input MSA, hence why there should be no need to parse file names for reassociation - we already have msaFileNameList]
+                odseqResults = []
+                for x in range(len(chunk)):
+                        if x % 2 == 1:                  # i.e., if we're looking at an odd number in the list, it should be a boolean result line rather than sequence ID line
+                                sl = chunk[x].split()   # It's probably overly cautious, but it does let us use sequences named 'TRUE' and 'FALSE' (why would you do this...) which a simple if == statement would not
+                                odseqResults += sl
+                # Convert 'TRUE' to True, 'FALSE' to False
+                for x in range(len(odseqResults)):
+                        if odseqResults[x] == 'TRUE':
+                                odseqResults[x] = True
+                        elif odseqResults[x] == 'FALSE':
+                                odseqResults[x] = False
+                        else:
+                                print('odseq_outlier_detect: unrecognised output in odseqResults (' + str(odseqResults[x]) + '). What\'s going on?')
+                                quit()
+                # Add to our dictionary using index as key [Refer to comment in brackets above, this should be an easy data structure to work with since msaFileNameList[0]'s result will be odseqDict[0]]
+                odseqDict[i] = odseqResults
+        # Ensure everything worked fine
+        if len(odseqDict) != len(msaFileNameList):
+                print('odseq_outlier_detect: length of odseqDict != length of msaFileNameList. Inspect the below stderr report to see what went wrong and try to fix it.')
+                print(odseqerr.decode("utf-8"))
+                quit()
+        # Clean up tmp file
+        os.unlink(scriptFile)
+        # Return results
+        return odseqDict
+
+def msa_outlier_detect(msaFileNameList, statsSave):
+        # Set up
+        import hdbscan, statistics
+        from Bio import AlignIO
+        import numpy as np
+        # Set default HDBSCAN parameters for detecting outliers in MSA
+        allowSingle = True      # Making this user tunable is probably incorrect.
+        clustSelect = 'eom'     # This method is pretty imprecise as it stands,
+        minSize = 2             # but it seems like these settings are the only
+        minSample = 2           # ones that really "work"
+        # Define functions integral to this one
         def sumpairs_score(pair):
                 if pair[0].upper() == pair[1].upper():
                         return 1
@@ -519,48 +598,132 @@ def msa_outlier_detect(msa, pairwiseMatrix, cutoff):
                 for a in range(len(msa)):
                         spScore.append([])
                         for b in range(len(msa)):
+                                colScores = []
+                                gapCount = 0
                                 if a == b:
                                         spScore[-1].append(0.00)
                                         continue
-                                colScores = []
-                                gapCount = 0
                                 for i in range(len(msa[a].seq)):
                                         pair = (msa[a][i], msa[b][i])
                                         if pair[0] != '-' and pair[1] != '-':
                                                 colScores.append(sumpairs_score(pair))
-                                        else:
+                                        elif pair[0] == '-' and pair[1] == '-':         # Don't penalise an alignment that has a gap induced by another sequence
+                                                continue
+                                        else:                                           # If this induces a gap in another alignment or is gapped itself, penalise it
                                                 gapCount += 1
                                 # Average column score with penalty for gaps
                                 if colScores != []:
-                                        #colScore = 1 - (sum(colScores) / len(colScores)) * (1 - (gapCount / len(msa[a])))
-                                        colScore = 1 - (sum(colScores) / len(colScores))
+                                        colScore = 1 - (sum(colScores) / len(colScores)) * (1 - (gapCount / len(msa[a])))       # 1 - (..) since we want this to be a measure of dissimilarity in line with what alfpy does
+                                        #colScore = 1 - (sum(colScores) / len(colScores))
                                 else:
                                         colScore = 1
                                 spScore[-1].append(colScore)
                 return spScore
         
-        ## TESTING - Cluster with HDBSCAN to identify outliers
-        import numpy as np
-        import hdbscan
-        pwdm = np.array(pairDist)
-        
-        allowSingle = True
-        clustSelect = 'eom'
-        minSize = 2
-        minSample = 2
-        
-        clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = clustSelect, min_cluster_size = int(minSize), min_samples = int(minSample), allow_single_cluster = allowSingle)
-        #clusterer.fit(pwdm)
-        spScore = pairwise_sumpairs_matrix(msa)
-        spdm = np.array(spScore)
-        clusterer.fit(spdm)
-        clust_groups = clusterer.labels_
-        
-        ## TESTING
-        meanDists = []
-        for entry in pairDist:
-                new = sorted(list(entry))[:-1]
-                meanDists.append(sum(new) / len(new))
+        # Ensure msaFileNameList is correctly formatted
+        if type(msaFileNameList) == str:
+                msaFileNameList = [msaFileNameList]
+        elif type(msaFileNameList) != list:
+                print('msa_outlier_detect: msaFileNameList type is not recognisable. It should be a list, but instead it is ' + str(type(msaFileNameList)) + '.')
+                print('Fix your input and try again.')
+                quit()
+        if msaFileNameList == []:
+                print('msa_outlier_detect: msaFileNameList is empty. I don\'t know what to do in this situation since it shouldn\'t happen.')
+                print('Code your call to this function properly to skip it.')
+                quit()
+        # Ensure statsSave is correctly formatted
+        if statsSave != True and statsSave != False:
+                print('msa_outlier_detect: statsSave should equal True or False, not ' + str(statsSave) + '.')
+                print('Fix your input and try again.')
+                quit()
+        # Loop through MSA files and try to identify outliers
+        outlierDict = {}
+        ongoingCount = 0
+        for fileName in msaFileNameList:
+                #fileName = msaFileNameList[24]
+                msa = AlignIO.read(fileName, 'fasta')
+                # Perform pairwise scoring
+                spScore = pairwise_sumpairs_matrix(msa)
+                spdm = np.array(spScore)
+                # Cluster with HDBSCAN
+                clusterer = hdbscan.HDBSCAN(metric='precomputed', cluster_selection_method = clustSelect, min_cluster_size = int(minSize), min_samples = int(minSample), allow_single_cluster = allowSingle)
+                clusterer.fit(spdm)
+                # Calculate basic statistics from pairwise scoring excluding HDBSCAN detected outliers
+                if statsSave == True:
+                        spMeanList = []
+                        spAllMeansList = []
+                        for i in range(len(spScore)):
+                                spMean = statistics.mean(spScore[i][:i] + spScore[i][i+1:])     # Exclude self-match
+                                spAllMeansList.append(spMean)
+                                if clusterer.labels_[i] == -1:
+                                        continue
+                                spMeanList.append(spMean)
+                        spMeansMean = statistics.mean(spMeanList)
+                        spMeansPsdt = statistics.pstdev(spMeanList)     # If len(spMeanList) == 1, stdev == 0. This makes it more likely we remove a legitimate sequence. TESTING: See if I should make this 10% of mean or something like that?
+                # Convert HDBSCAN groups into boolean list of True == outlier, False == not outlier
+                outlierList = []
+                for i in range(len(clusterer.labels_)):
+                        label = clusterer.labels_[i]
+                        if label == -1:
+                                if statsSave == True:
+                                        '''Note: This serves as a _really_ rough heuristic check to justify HDBSCAN's clustering decision. It involves 
+                                        a basic comparison using pstdev to see if this row's mean SP score is anomalous compared to others. At the start
+                                        is an additional hard cut-off check to make sure we don't remove something "a little bit" different to a group of 
+                                        sequences that are otherwise very similar. I added this cut-off check as a result of manual inspection of results
+                                        to prevent a mistake from happening to a specific cluster I was testing. The test scenario was this [0.26951219512195124,
+                                        0.33048780487804874, 0.2, 0.22073170731707314, 0.2182926829268293, 0.21707317073170732]. 0.33 was detected as an outlier,
+                                        but 0.33 is still really similar for a SP score. 0.2 * 2 == 0.4, and this helps to rescue our example. 0.5 seems to
+                                        be a point where the cluster is no longer highly homogenous
+                                        '''
+                                        if spAllMeansList[i] < 0.5 and spAllMeansList[i] < min(spAllMeansList) * 2:
+                                                outlierList.append(False)
+                                        elif spAllMeansList[i] > spMeansMean + (1.5*spMeansPsdt):
+                                                outlierList.append(True)
+                                        else:
+                                                outlierList.append(False)
+                                else:
+                                        outlierList.append(True)
+                        else:
+                                outlierList.append(False)
+                outlierDict[ongoingCount] = outlierList
+                ongoingCount += 1
+        return outlierDict
+
+def outlier_dict_merge(dict1, dict2):
+        # Ensure dict inputs are compatible
+        if set(dict1.keys()) != set(dict2.keys()):
+                print('outlier_dict_merge: dict1 and dict2 don\'t have identical keys. This shouldn\'t be true if they were produced using the same MSA file name list.')
+                print('Fix your input and try again.')
+                quit()
+        # Merge into a new output dict
+        mergedDict = {}
+        for key in dict1.keys():
+                value1 = dict1[key]
+                value2 = dict2[key]
+                if len(value1) != len(value2):
+                        print('outlier_dict_merge: values within dict1 and dict2 don\'t have identical length. This shouldn\'t be true if they were produced using the same MSA file name list.')
+                        print('Fix your input and try again. A bit of debug info is below.')
+                        print('Key = ' + str(key) + '. Value1 = ' + str(value1) + '. Value2 = ' + str(value2) + '.')
+                        quit()
+                mergedList = []
+                for i in range(len(value1)):
+                        if value1[i] == True and value2[i] == True:     # If both outlier detection methods agree that it is an outlier, we mark it as outlier
+                                mergedList.append(True)
+                        else:                                           # If they disagree whether it's an outlier or both agree it is not an outlier, we marked it as not outlier
+                                mergedList.append(False)
+                mergedDict[key] = mergedList
+        return mergedDict
+
+def file_name_gen(prefix, suffix):
+        import os
+        ongoingCount = 2
+        while True:
+                if not os.path.isfile(prefix + '1' + suffix):
+                        return prefix + '1' + suffix
+                elif os.path.isfile(prefix + str(ongoingCount) + suffix):
+                        ongoingCount += 1
+                else:
+                        return prefix + str(ongoingCount) + suffix
 
 def cluster_hmms(msaDir, hmmer3dir, concatName):
         # Set up
