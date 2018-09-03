@@ -392,8 +392,7 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
         # Return results either as the MSA object, as an output file, or as both
         if outType.lower() == 'file' or outType.lower() == 'both':
                 with open(msaFastaOut, 'w') as fileOut:
-                        for row in msa:
-                                fileOut.write('>' + row.description + '\n' + str(row.seq) + '\n')
+                        fileOut.write(msa.format('fasta'))
         if outType.lower() == 'obj' or outType.lower() == 'both':
                 return msa
 
@@ -577,10 +576,11 @@ def odseq_outlier_detect(msaFileNameList, rScriptDir, tmpDir, threshold, distMet
         # Return results
         return odseqDict
 
-def msa_outlier_detect(msaFileNameList, statsSave):
+def msa_outlier_detect(msaFileNameList, statsSave, removeIdentical):
         # Set up
         import hdbscan, statistics
         from Bio import AlignIO
+        from Bio.Align import MultipleSeqAlignment
         import numpy as np
         # Set default HDBSCAN parameters for detecting outliers in MSA
         allowSingle = True      # Making this user tunable is probably incorrect.
@@ -609,6 +609,8 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                                                 colScores.append(sumpairs_score(pair))
                                         elif pair[0] == '-' and pair[1] == '-':         # Don't penalise an alignment that has a gap induced by another sequence
                                                 continue
+                                        elif set(msa[a][i:]) == {'-'}:                  # Don't penalise an alignment that has ended; TESTING
+                                                continue
                                         else:                                           # If this induces a gap in another alignment or is gapped itself, penalise it
                                                 gapCount += 1
                                 # Average column score with penalty for gaps
@@ -636,12 +638,52 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                 print('msa_outlier_detect: statsSave should equal True or False, not ' + str(statsSave) + '.')
                 print('Fix your input and try again.')
                 quit()
+        # Ensure removeIdentical is correctly formatted
+        if removeIdentical != True and removeIdentical != False:
+                print('msa_outlier_detect: removeIdentical should equal True or False, not ' + str(removeIdentical) + '.')
+                print('Fix your input and try again.')
+                quit()
         # Loop through MSA files and try to identify outliers
         outlierDict = {}
         ongoingCount = 0
         for fileName in msaFileNameList:
-                #fileName = msaFileNameList[2]
                 msa = AlignIO.read(fileName, 'fasta')
+                # Remove identical sequences if relevant [these can skew our pairwise scoring matrix if highly similar sequence bits slip through]
+                if removeIdentical == True:
+                        madeChanges = False
+                        newMsa = MultipleSeqAlignment([])
+                        identicalPairs = []
+                        for y in range(len(msa)):
+                                for z in range(len(msa)):
+                                        if y == z:
+                                                continue
+                                        elif msa[y].seq == msa[z].seq:
+                                                identicalPairs.append([y, z])
+                        if identicalPairs != []:
+                                # Define our full identical group(s)
+                                removeGroups = [identicalPairs[0]]      # Seed removeGroups with our first pair
+                                for pair in identicalPairs:
+                                        for n in range(len(identicalPairs)):
+                                                if pair[0] in identicalPairs[n] or pair[1] in identicalPairs[n]:
+                                                        if pair[0] not in identicalPairs[n]:
+                                                                identicalPairs[n].append(pair[0])
+                                                        elif pair[1] not in identicalPairs[n]:
+                                                                identicalPairs[n].append(pair[1])
+                                                else:
+                                                        removeGroups.append(pair)
+                                # Remove all but one entry from each identical group from our newMsa
+                                for y in range(len(msa)):
+                                        found = False
+                                        for group in removeGroups:
+                                                if y in group[1:]:      # This means we can allow the first number in each removeGroup
+                                                        found = True
+                                                        break
+                                        if found == False:
+                                                newMsa.append(msa[y])
+                                if len(newMsa) > 2:     # We don't want to work with a structure with less than 3 sequences since our pairwise scoring becomes less impactful. It's a bit arbitrary in some respects,
+                                        madeChanges = True
+                                        origMsaLen = len(msa)
+                                        msa = newMsa    # but this should help a domain model to not be overwhelmed by identical sequences while still letting us meaningfully use means and stdev for outlier detection.
                 # Perform pairwise scoring
                 spScore = pairwise_sumpairs_matrix(msa)
                 spdm = np.array(spScore)
@@ -664,8 +706,8 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                 outlierList = []
                 for i in range(len(clusterer.labels_)):
                         label = clusterer.labels_[i]
-                        if label == -1:
-                                if statsSave == True:
+                        if label == -1 or (-1 not in clusterer.labels_ and 1 in clusterer.labels_):     # If the second condition is True, HDBSCAN didn't find any outliers but it did find at least 2 separate clusters. In this case, it seems
+                                if statsSave == True:                                                   # appropriate to treat every sequence as a potential outlier, and use our statistical distribution to pick out huge outliers
                                         '''Note: This serves as a _really_ rough heuristic check to justify HDBSCAN's clustering decision. It involves 
                                         a basic comparison using pstdev to see if this row's mean SP score is anomalous compared to others. At the start
                                         is an additional hard cut-off check to make sure we don't remove something "a little bit" different to a group of 
@@ -673,16 +715,18 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                                         to prevent a mistake from happening to a specific cluster I was testing. The test scenario was this [0.26951219512195124,
                                         0.33048780487804874, 0.2, 0.22073170731707314, 0.2182926829268293, 0.21707317073170732]. 0.33 was detected as an outlier,
                                         but 0.33 is still really similar for a SP score. 0.2 * 2 == 0.4, and this helps to rescue our example. 0.5 seems to
-                                        be a point where the cluster is no longer highly homogenous
+                                        be a point where the cluster is no longer highly homogenous.
                                         The second hard cut-off check was derived from [0.5294117647058824, 0.47500000000000003, 0.46029411764705885, 0.5042016806722689,
                                         0.4613445378151261]. It exceeds our 0.5 cut-off so we want to be less lenient with it, but the first sequence is still
                                         quite similar to the others from manual inspection. 0.1 seems to be a good point where, even if the minimum mean is 0.5,
                                         a sequence with distance 0.6 to the others still looks "normal" in a MSA. 0.7 as the max for this cut-off is a bit
                                         arbitrary and it shouldn't really happen, but it's just to prevent any weirdness from happening (e.g., a cluster
-                                        of 0.9 distances should not group with a 1.0 distance)
+                                        of 0.9 distances should not group with a 1.0 distance [even though a 0.9 cluster shouldn't exist])
                                         '''
                                         if spAllMeansList[i] < 0.5 and spAllMeansList[i] < min(spAllMeansList) * 2:
                                                 outlierList.append(False)
+                                        elif spAllMeansList[i] < 0.6 and spAllMeansList[i] < min(spAllMeansList) + 0.15:        # This is another hard cut-off case derived from real data
+                                                outlierList.append(False)                                                       # tldr; 0.45 and 0.6 are compatible in a cluster
                                         elif spAllMeansList[i] < 0.7 and spAllMeansList[i] < min(spAllMeansList) + 0.1:
                                                 outlierList.append(False)
                                         elif spAllMeansList[i] > spMeansMean + (1.5*spMeansPsdt):
@@ -693,7 +737,17 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                                         outlierList.append(True)
                         else:
                                 outlierList.append(False)
-                outlierDict[ongoingCount] = outlierList
+                # Add in previously deleted identical values if removeIdentical is specified and we made changes
+                if removeIdentical == True:
+                        if madeChanges == True:
+                                for x in range(origMsaLen):
+                                        found = False
+                                        for group in removeGroups:
+                                                if x in group[1:]:
+                                                        found = group
+                                        if found != False:
+                                                outlierList.insert(x, outlierList[found[0]])    # This took me a bit of mental effort to devise, then a bit more to understand why it worked, but it's quite simple
+                outlierDict[ongoingCount] = outlierList                                         # When we find an index that was removed, we just insert an identical copy of its remaining sequence result, the index of which is given by found[0]
                 ongoingCount += 1
         return outlierDict
 
@@ -721,6 +775,59 @@ def outlier_dict_merge(dict1, dict2):
                                 mergedList.append(False)
                 mergedDict[key] = mergedList
         return mergedDict
+
+def curate_msa_from_outlier_dict(outlierDict, msaFileNameList):
+        # Set up
+        from Bio import AlignIO
+        from Bio.Align import MultipleSeqAlignment
+        from Bio.Seq import Seq
+        from Bio.Alphabet import SingleLetterAlphabet
+        # Ensure msaFileNameList is correctly formatted
+        if type(msaFileNameList) == str:
+                msaFileNameList = [msaFileNameList]
+        elif type(msaFileNameList) != list:
+                print('curate_msa_from_outlier_dict: msaFileNameList type is not recognisable. It should be a list, but instead it is ' + str(type(msaFileNameList)) + '.')
+                print('Fix your input and try again.')
+                quit()
+        if msaFileNameList == []:
+                print('curate_msa_from_outlier_dict: msaFileNameList is empty. I don\'t know what to do in this situation since it shouldn\'t happen.')
+                print('Code your call to this function properly to skip it.')
+                quit()
+        # Ensure outlierDict and msaFileNameList are compatible
+        if len(outlierDict) != len(msaFileNameList):
+                print('curate_msa_from_outlier_dict: msaFileNameList length is not identical to outlierDict length. This shouldn\'t be true if they were produced using the same MSA file name list.')
+                print('Fix your input and try again. A bit of debug info is below.')
+                print('Len outlierDict = ' + str(len(outlierDict)) + '. Len msaFileNameList = ' + str(len(msaFileNameList)) + '.')
+                quit()
+        # Loop through msaFileNameList and make modifications to MSAs in place
+        for i in range(len(msaFileNameList)):
+                # Parse MSA and make sure it corresponds to outlierDict correctly
+                msa = AlignIO.read(msaFileNameList[i], 'fasta')
+                outlierList = outlierDict[i]
+                if len(msa) != len(outlierList):
+                        print('curate_msa_from_outlier_dict: MSA file "' + msaFileNameList[i] + '" length is not the same as outlierDict entry. This shouldn\'t be true if they were produced using the same MSA file name list.')
+                        print('Fix your input and try again.')
+                        quit()
+                newMsa = MultipleSeqAlignment([])
+                for y in range(len(msa)):
+                        if outlierList[y] == False:
+                                newMsa.append(msa[y])
+                # If we dropped sequences, ensure that our newMsa still has more than one entry in it [Note: this should technically never happen]
+                if len(newMsa) < 2:
+                        print('curate_msa_from_outlier_dict: MSA file "' + msaFileNameList[i] + '" after outlier removal has less than two entries. This shouldn\'t be possible, so something is wrong with the code.')
+                        print('A bit of debug info is below.')
+                        print('Len msa = ' + str(len(msa)) + '. Len newMsa = ' + str(len(newMsa)) + '. outlistList = ' + str(outlierList) + '.')
+                        quit()
+                # If we dropped sequences, make sure we don't have any blank columns now
+                if len(newMsa) < len(msa):
+                        for a in range(len(newMsa[0].seq), 0, -1):
+                                col = newMsa[:,a-1]
+                                if set(col) == {'-'}:
+                                        for b in range(len(newMsa)):
+                                                newMsa[b].seq = Seq(str(newMsa[b].seq)[0:a-1] + str(newMsa[b].seq)[a:], SingleLetterAlphabet())
+                # Produce our updated MSA fasta file
+                with open(msaFileNameList[i], 'w') as fileOut:
+                        fileOut.write(newMsa.format('fasta'))
 
 def file_name_gen(prefix, suffix):
         import os
