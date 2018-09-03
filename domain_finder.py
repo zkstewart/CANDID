@@ -761,15 +761,15 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 if groupDict == {}:
                         noClust = True
                         break
-                # Cluster curation: detect and remove outlier sequences [We need to separate this from the above since we need to run it all in a single go as calling rScript and loading in packages for each individual sequence is too time consuming]
+                # Cluster curation: detect and remove outlier sequences [We need to separate this from the above since we need to run it all in a single go as calling Rscript and loading in packages for each individual sequence is too time consuming]
                 msaFileNameList = []
                 for i in range(len(groupDict)):
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
                         msaFileNameList.append(msaFileName)
                 odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # TESTING: values are arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
-                spOutResults = domclust.msa_outlier_detect(msaFileNameList, True)                                                       # True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
-                mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)
-                ## TO-DO: Use outlier results to modify MSAs
+                spOutResults = domclust.msa_outlier_detect(msaFileNameList, True, True)                                                 # The first True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
+                mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)                                          # The second True above removes identical sequences for the purpose of calculating distribution statistics; this helps to prevent a domain being overwhelmed by identicality (it's a word, look it up)
+                domclust.curate_msa_from_outlier_dict(mergedOutlierResults, msaFileNameList)
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
