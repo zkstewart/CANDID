@@ -640,7 +640,7 @@ def msa_outlier_detect(msaFileNameList, statsSave):
         outlierDict = {}
         ongoingCount = 0
         for fileName in msaFileNameList:
-                #fileName = msaFileNameList[24]
+                #fileName = msaFileNameList[2]
                 msa = AlignIO.read(fileName, 'fasta')
                 # Perform pairwise scoring
                 spScore = pairwise_sumpairs_matrix(msa)
@@ -659,7 +659,7 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                                         continue
                                 spMeanList.append(spMean)
                         spMeansMean = statistics.mean(spMeanList)
-                        spMeansPsdt = statistics.pstdev(spMeanList)     # If len(spMeanList) == 1, stdev == 0. This makes it more likely we remove a legitimate sequence. TESTING: See if I should make this 10% of mean or something like that?
+                        spMeansPsdt = statistics.stdev(spMeanList)     # If len(spMeanList) == 1, stdev == 0. This makes it more likely we remove a legitimate sequence. TESTING: See if I should make this 10% of mean or something like that?
                 # Convert HDBSCAN groups into boolean list of True == outlier, False == not outlier
                 outlierList = []
                 for i in range(len(clusterer.labels_)):
@@ -674,8 +674,16 @@ def msa_outlier_detect(msaFileNameList, statsSave):
                                         0.33048780487804874, 0.2, 0.22073170731707314, 0.2182926829268293, 0.21707317073170732]. 0.33 was detected as an outlier,
                                         but 0.33 is still really similar for a SP score. 0.2 * 2 == 0.4, and this helps to rescue our example. 0.5 seems to
                                         be a point where the cluster is no longer highly homogenous
+                                        The second hard cut-off check was derived from [0.5294117647058824, 0.47500000000000003, 0.46029411764705885, 0.5042016806722689,
+                                        0.4613445378151261]. It exceeds our 0.5 cut-off so we want to be less lenient with it, but the first sequence is still
+                                        quite similar to the others from manual inspection. 0.1 seems to be a good point where, even if the minimum mean is 0.5,
+                                        a sequence with distance 0.6 to the others still looks "normal" in a MSA. 0.7 as the max for this cut-off is a bit
+                                        arbitrary and it shouldn't really happen, but it's just to prevent any weirdness from happening (e.g., a cluster
+                                        of 0.9 distances should not group with a 1.0 distance)
                                         '''
                                         if spAllMeansList[i] < 0.5 and spAllMeansList[i] < min(spAllMeansList) * 2:
+                                                outlierList.append(False)
+                                        elif spAllMeansList[i] < 0.7 and spAllMeansList[i] < min(spAllMeansList) + 0.1:
                                                 outlierList.append(False)
                                         elif spAllMeansList[i] > spMeansMean + (1.5*spMeansPsdt):
                                                 outlierList.append(True)
