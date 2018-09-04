@@ -1,7 +1,7 @@
 # CANDID
 Cluster-based Alignment-free Novel Domain Iterative Discovery
 
-This is a program still undergoing development - it's getting pretty close to being "finished", though! Its intent is to discover novel domains by excluding known domain regions from proteins and subsequently utilising sensitive MMseqs2 search to find potential domain regions which are clustered based on alignment-free distance measures and iteratively used as HMMER queries until convergence is reached.
+CANDID is a program that is in its final stage of development and otherwise fully functional. Its intent is to discover novel domains by excluding known domain regions from proteins and subsequently utilising sensitive MMseqs2 search to find potential domain regions which are clustered based on alignment-free distance measures and iteratively used as HMMER queries until convergence is reached.
 
 ## Prerequisites
 CANDID operates as a pipeline which calls quite a few external programs and resources, as well as packages within Python and R. Below is a list detailing all the things you'll need to successfully run CANDID.
@@ -28,22 +28,26 @@ CANDID operates as a pipeline which calls quite a few external programs and reso
 * Python 3.X
   * If NOT running Hammock for clustering, alfpy is required https://github.com/aziele/alfpy
   * If NOT running Hammock for clustering, HDBSCAN is required https://github.com/scikit-learn-contrib/hdbscan
-* Hammock can optionally replace alfpy-HDBSCAN clustering (https://github.com/krejciadam/hammock)
+* Hammock can optionally replace ALF-HDBSCAN clustering (https://github.com/krejciadam/hammock)
 
 Note that, while Hammock is offered as an option for clustering, from initial testing alignment-free HDBSCAN (ALF-HDBSCAN) clustering seems like a better option in most scenarios. It is a lot faster which is important for the iterative nature of CANDID to converge upon a solution quicker. Moreover, it is more likely to detect clusters in a data set where Hammock may struggle. If you have the time and computational resources, there's no reason why you shouldn't be able to try out both solutions and see what works best.
 
 **IMPORTANT**: I haven't figured out how to get Hammock to run on Windows using Cygwin. If you can do this, let me know how. Otherwise, you may be limited to ALF-HDBSCAN on this operating system.
 
-## Progress
+## Development progress
 
 Changes that have occurred recently:
 
-1. MSA curation functions are being included to remove bad quality clusters and remove outliers from clusters. Unfortunately, I do not know of a way to get HDBSCAN to consistently output "perfect" clusters without having the odd outliers here and there. I don't think this is possible, and it is just part of the beast we're working with - really short protein sequence clustering is hard. Hammock struggles in the exact same ways which is reassuring and disappointing that no perfect solution exists. Nonetheless, I have included msa_trim to remove extensions surrounding the putative domain region and remove excessively gappy sequences. msa_score acts as a simple heuristic measure to remove obviously poor quality clusters. odseq_outlier_detect is a WIP function which will call ODseq on each cluster and remove outliers. I would have liked to implement something similar to this directly within Python for convenience/speed of use/to not require R as another external program to the already long list, but I can't imitate it well enough. Combined, these functions allow us to use relaxed HDBSCAN clustering (maximising our ability to detect clusters) while culling the poor quality clusters that inevitably result from this.
-2. coord_lists_overlap_cull has been added to ensure that we don't rediscover non-novel domain regions. This resulted in an immediate and drastic improvement to the results.
+1. MSA curation functions are completely implemented. ODseq's outlier predictions require additional validation with my own (rough) outlier detection method. This combination helps to temper these results to be less strict in certain situations.
+2. Optimal default parameters are likely to be minsize = (2 or 3) and minsample = 2. minsize depends on the amount of data that is input; with small datasets use 2, and with larger ones use 3. minsample is tricky; in most cases 2 works best but in at least one case with a smaller dataset only minsample == 1 was able to recover domains.
+3. Testing code is being stripped out since we're largely done with developing individual functions.
 
 Directions for improvement:
 
-1. Finish msa curation system
-2. Update benchparse system to work with the newer version of the code.
-3. Figure out optimal default parameters - more testing!
-4. Strip out testing code once I have figured out the optimal default parameters.
+1. Improvement to CANDID is likely only possible now through the assistant function detailed below for combining outputs from multiple runs. The core functionality of the program is complete and I do not have any ideas or plans for adding new things in.
+2. One little thing: do a bit more testing to see if I should change the convergence detection to stop in the first instance that no changes are detected.
+3. Continued updating to this README. Include subheadings like 'How to use', 'Parameter selection', 'HMM database creation', 'CANDID output combining', and anything else that might be relevant.
+
+## Extra programs under development for assisting CANDID operations
+1. HMM database formatting code needs to be updated and included here.
+2. CANDID output clustering/combining program. Currently, CANDID's weakness is that HDBSCAN can give variable results depending on specified settings. Combining multiple runs is a logical solution, but doing this isn't entirely easily. I think that developing something based on Hammock to combine the HMMs from multiple runs would be sensible. This would need to be able to combine clusters together without redundant/overlapping sequence, and identify novel clusters present in only one/some settings configurations. In short, difficult, but not as big of an undertaking as CANDID itself was.
