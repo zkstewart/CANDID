@@ -55,7 +55,7 @@ def validate_args(args):
         else:
                 program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
         # Validate integer arguments
-        intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA']
+        intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA', 'wordsize']
         for entry in intArgs:
                 if type(vars(args)[entry]) == str:                                      # If these values aren't strings, they were specified on command-line
                         if "'" in vars(args)[entry] or '"' in vars(args)[entry]:        # Handle a plausible mistake the user may make
@@ -168,7 +168,7 @@ def output_arg_handling(args):
                 else:
                         # If we're resuming a run and we HAVE specified a config file, warn the user that any changes could have unpredictable results
                         print('You specified a config file on the command-line which I was able to find. However, note that if this config file differs to the one used in the original program run, unexpected results may occur.')
-                        print('I\'m going to assume you know what you\'re doing (even though you should just allow me to find the config file within the outdir). If weird errors occur, remember this message when you\'re scratching your head.')
+                        print('I\'m going to assume you know what you\'re doing (even though you should just allow me to find the config file within the outdir). If weird errors occur, remember this message when you\'re scratching your head.\n')
         # Alter our output directory value to make sure it is the absolute path
         args.outdir = os.path.abspath(args.outdir)
         return args
@@ -186,7 +186,7 @@ def default_parameter_dict(inputKey):
                          'cygwindir': '', 'javadir': '', 'mafftdir': '', 'cdc': 0.4,
                          'cdn': 2, 'cdg': 0, 'cdas': 0.9, 'cdal': 0.6, 'cdm': 1000,
                          'signalporg': 'euk', 'hmmeval': 1e-1, 'hmmevalnov': 1e-1,
-                         'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n',
+                         'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n', 'wordsize': 2,
                          'minsize': 3,'minsample': 2, 'leaf': False, 'singleclust': False,
                          'numiters': 0, 'cleanAA': 30, 'verbose': False, 'hammockdir': '',      # hammockdir is an exception to the below comment; we don't want to make it mandatory, but if Hammock is being used, we can't specify a default
                          #'fasta': , 'outdir': None, 'config': None,                            # If hammockdir == '' then we know that we aren't using it, so thi
@@ -255,6 +255,7 @@ def config_file_generation(args):
                                 continue
                         # Write everything else to file
                         fileOut.write(key + ' = ' + str(value) + '\n')
+        return configFile
 
 ## Dictionary merging for seg/coils
 def coord_merge(coordList, coord):
@@ -426,10 +427,8 @@ showHiddenArgs = '-help-long' in sys.argv
 
 # Required
 p = argparse.ArgumentParser(description=usageLong if showHiddenArgs else usageShort, formatter_class=argparse.RawDescriptionHelpFormatter)
-#p.add_argument("fasta", type = str, help="Specify the fasta file from which domains will be identified.")
-#p.add_argument("outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
-p.add_argument("-fasta", dest="fasta", type = str, help="Specify the fasta file from which domains will be identified.")
-p.add_argument("-outdir", dest="outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
+p.add_argument("fasta", type = str, help="Specify the fasta file from which domains will be identified.")
+p.add_argument("outdir", type = str, help="Specify the name of the output directory; this will be created if it doesn't exist, and if it does, we will attempt to resume any previous runs based on the files within (you do not need to specify any of the below arguments in this case).")
 
 # Opts 0: Basic program requirements which do not need to be specified in all cases
 p.add_argument("-config", dest="config", type = str,
@@ -518,12 +517,17 @@ p.add_argument("-alf", dest="alf", type = str, choices = ['google', 'braycurtis'
                   if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-reduce", dest="reduce", choices = ['n', '11', '15'],
                   help="""If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether
-                  this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n').""")   ### MAKE MSA SCORE COMPATIBLE WITH REDUCED ALPHABET
+                  this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n')."""
+                  if showHiddenArgs else argparse.SUPPRESS)   ### TESTING: MAKE MSA SCORE COMPATIBLE WITH REDUCED ALPHABET
+p.add_argument("-wordsize", dest="wordsize", type = int,
+                  help="""Dictates the word size used during alignment-free sequence comparison. Recommended to use
+                  2. Depending on your purposes, you may vary this, but the optimal range is likely from 2-6."""
+                  if showHiddenArgs else argparse.SUPPRESS)
 # Opts 6: HDBSCAN algorithm parameters
 p.add_argument("-minsize", dest="minsize", type = int,
                   help="""Dictates the minimum cluster size argument provided to HDBSCAN. 
                   Higher numbers will result in identification of domains that occur more frequently in your data. 
-                  Recommended to use 2 (at least).""" if showHiddenArgs else argparse.SUPPRESS)
+                  Recommended to use 3 (>=2 at least).""" if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-minsample", dest="minsample", type = int,
                   help="""Dictates the minimum sample size argument provided to HDBSCAN. 
                   Higher numbers will increase the strictness with which HDBSCAN clusters sequences, 
@@ -550,7 +554,8 @@ p.add_argument("-cleanAA", dest="cleanAA", type = int,
                   the expected minimum length of a true domain. This value is not intended to be changed; experienced users may wish to do so, however."""
                   if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-benchmark", dest="benchmark", action = "store_true", default = False,                  # We leave command-line only values as False
-                  help="This setting is used specifically for testing. DELETE BEFORE PROGRAM IS SHARED."
+                  help="""This setting is used specifically for testing. Currently, this may be removed at some point
+                  and only used internally for benchmarking the performance of the program for potential publication."""
                   if showHiddenArgs else argparse.SUPPRESS)
 # Opts 9: Alternative program operations
 p.add_argument("-generate_config", dest="generate_config", action = "store_true", default = False,
@@ -562,19 +567,11 @@ p.add_argument("-help-long", dest="help-long", action = "help", default = False,
                   help="Show all options, including those that are not recommended to be changed.")
 
 args = p.parse_args()
-## HARD CODED FOR TESTING
-#args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\cal_dge_orfs_prot_33AA.fasta'
-args.fasta = r'D:\Project_Files\Scripting_related\Domain_Finding\GCA_001417965.1_Aiptasia_genome_1.1_protein_subset.fasta'
-#args.outdir = 'newtest'
-args.outdir = 'exaiptest'
 
 #### DATA PREPARATION
 
 # Handle output directory for a new or existing run
 args = output_arg_handling(args)
-
-## HARD CODED FOR TESTING
-args.config = r'D:\Project_Files\Scripting_related\Domain_Finding\basic_CANDID.config'
 
 # Combine command-line & config file arguments
 if args.config != None:
@@ -587,7 +584,8 @@ args = defaults_args_update(args)
 validate_args(args)
 
 # Generate a config file within the output directory
-config_file_generation(args)
+args.config = config_file_generation(args)
+verbose_print(args.verbose, 'Config file for this run = ' + os.path.abspath(args.config))
 if args.generate_config:
         print('Since -generate_config was provided, I am now stopping program execution after config file generation within ' + args.outdir)
         quit()
@@ -734,8 +732,8 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
                 else:
                         # HDBSCAN clustering
-                        matrixList, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', None, args.alf)
-                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, args.minsize, args.minsample, matrixList, idList)
+                        matrixList, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', args.wordsize, args.reduce, args.alf)
+                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, 2, 1, matrixList, idList)
                 if groupDict == None:
                         noClust = True
                         break
@@ -750,7 +748,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
                         msaObj = domclust.msa_trim(msaFileName, 0.7, 0.25, 'both', msaFileName, 0.5, 'drop')    # Values are arbitrary, unlikely to need user-modification; 0.7 means we'll trim up to the point where 70% of the sequence's have a base present in a single column, 0.25 means we will only trim it maximally up to 25% remaining of the sequence length - if we need to trim it more than that to reach our 70% goal, we'll drop the whole msa
                         if msaObj != None:                                                                      # Line above: 0.5 here means we will drop individual sequences that don't "fit" the alignment if they are more than 50% gap sequence; 'drop' specifies the behaviour to drop this alignment, returning None; finally, we specify 'both' to both return a msa object and write the modified alignment to file
-                                alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)  ## TESTING
+                                alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)                             # Value is arbitrary; MSAs which score less than 0.20 tends to look pretty bad from visual inspection, and it seems like a good way to remove obviously bad clusters automatically
                         else:
                                 alignCheck = False
                         if alignCheck == False:
@@ -766,7 +764,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 for i in range(len(groupDict)):
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
                         msaFileNameList.append(msaFileName)
-                odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # TESTING: values are arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
+                odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # Values are somewhat arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
                 spOutResults = domclust.msa_outlier_detect(msaFileNameList, True, True)                                                 # The first True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
                 mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)                                          # The second True above removes identical sequences for the purpose of calculating distribution statistics; this helps to prevent a domain being overwhelmed by identicality (it's a word, look it up)
                 domclust.curate_msa_from_outlier_dict(mergedOutlierResults, msaFileNameList)
@@ -774,10 +772,10 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
                 domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
                 domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
-                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, False)     # We specify False here since we don't want to merge coords; they shouldn't overlap, anyway [##TESTING: Validate this is true]
+                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, False)     # We specify False here since we don't want to merge coords; they shouldn't overlap, anyway
                 # Compare coords against known domain model coords to prevent rediscovery of known domains
                 try:
-                        hmmerCoordDict                                                                                                  # If we're running the program in a single go, or we are reiterating, we will already have produced this value
+                        type(hmmerCoordDict)                                                                                            # If we're running the program in a single go, or we are reiterating, we will already have produced this value
                 except:
                         hmmerCoordDict = domtblout_handling.hmmer_coord_reparse(outputBase + '_hmmerParsed.results', None, True)        # If we're resuming a run or on our first loop, we'll want to reobtain this value
                 coordDict = domclust.coord_lists_overlap_cull(hmmerCoordDict, coordDict, 0.10)                                          # Value is arbitrary; this function will remove any coord from coordDict if it overlaps a coord in hmmerCoordDict by >= 10% in either direction
@@ -800,9 +798,6 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 # Extra exit condition for if you change your mind about wanting to wait for convergence; check for file which indicates exit
                 if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
                         earlyExit = True
-
-## TO-DO: Compare output table and find novel clusters that regularly overlap positions; consider merging their MSAs
-
 
 # Provide informative loop exit text
 if noClust == True:
