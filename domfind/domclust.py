@@ -32,63 +32,7 @@ def protein_alphabet_reduce(proteinList, reduceNum):
                 proteinList = proteinList[0]
         return proteinList
 
-def alfree_matrix_threaded(fastaFile, reduceNum, alfAlgorithm, threads):        # Likely not going to use this, but dont wan't to throw it away just yet
-        # Set up
-        import threading
-        from alfpy import word_pattern, word_vector, word_distance
-        from alfpy.utils import seqrecords, distmatrix
-        from alfpy.utils.data import seqcontent
-        # Define function for threading
-        def run_alf(seqList, lengthList, idList, wordSize, alfAlgorithm, matrixList):
-                p = word_pattern.create(seqList, word_size=num)
-                if alfAlgorithm == 'canberra':
-                        weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
-                        counts = word_vector.CountsWeight(lengthList, p, weightmodel)
-                else:
-                        counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, alfAlgorithm)
-                matrixList.append(distmatrix.create(idList, dist))
-        
-        # Read in unclustered domains file
-        unclustDoms = open(fastaFile)
-        records = seqrecords.read_fasta(unclustDoms)
-        unclustDoms.close()
-        # Extract details from records using alfpy-provided functions
-        seqList = records.seq_list
-        lengthList = records.length_list
-        idList = records.id_list
-        # Optional reduction of protein alphabet
-        seqList = protein_alphabet_reduce(seqList, reduceNum)
-        # Compute distance matrix for word sizes
-        matrix = []
-        processing_threads = []
-        wordSizes = [2,1]       ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
-        for num in wordSizes:
-                p = word_pattern.create(seqList, word_size=num)
-                if alfAlgorithm == 'canberra':
-                        weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
-                        counts = word_vector.CountsWeight(lengthList, p, weightmodel)
-                else:
-                        counts = word_vector.Counts(lengthList, p)
-                dist = word_distance.Distance(counts, alfAlgorithm)
-                matrix.append(distmatrix.create(idList, dist))
-        
-        
-        
-        for num in wordSizes:
-                if threads > 1:
-                        build = threading.Thread(target=run_alf, args=(seqList, lengthList, idList, num, alfAlgorithm, matrix))
-                        processing_threads.append(build)
-                        build.start()
-        
-                        # Wait for all threads to end.
-                        for process_thread in processing_threads:
-                                process_thread.join()
-        
-        # Return value
-        return matrix[0], matrix[1], idList
-
-def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
+def alfree_matrix(fastaFile, wordSize, reduceNum, alfAlgorithm):
         # Set up
         from alfpy import word_pattern, word_vector, word_distance
         from alfpy.utils import seqrecords, distmatrix
@@ -104,10 +48,10 @@ def alfree_matrix(fastaFile, reduceNum, alfAlgorithm):
         # Optional reduction of protein alphabet
         seqList = protein_alphabet_reduce(seqList, reduceNum)
         # Compute distance matrix for word sizes
-        matrices = []           # Currently I'm not returning multiple matrices; I'll change this if I decide to only use wordsize 1 or 2
-        wordSizes = [2]       ## TESTING: Modify this to change the ordering of word size; the first value takes priority during HDBSCAN clustering
+        matrices = []           # Currently I'm not returning multiple matrices, but this exists to enable multiple word sizes to be used and combined
+        wordSizes = [wordSize]  # As above, not used now, but maybe in the future this will be relevant
         for num in wordSizes:
-                p = word_pattern.create(seqList, word_size=num)
+                p = word_pattern.create(seqList, word_size=wordSize)
                 if alfAlgorithm == 'canberra':
                         weightmodel = word_vector.WeightModel(seqcontent.get_weights('protein'))
                         counts = word_vector.CountsWeight(lengthList, p, weightmodel)
@@ -139,8 +83,6 @@ def cluster_hdb(leaf, singleClust, minSize, minSample, matrixList, idList):
                 clusterer.fit(matrix.data)
                 # Pull out domain groups
                 clust_groups = clusterer.labels_
-                #clust_probs = clusterer.probabilities_
-                #print(clust_probs)
                 # Sort groups
                 groupDict = {}
                 for i in range(len(idList)):
@@ -336,10 +278,10 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
         # Check our values to ensure they're sensible
         if i >= x:      # If i >= x, that means we'd be trimming the sequence to 1bp or a negative value; in other words, we can't trim it at this pctTrim as printed below
                 if skipOrDrop.lower() == 'skip':
-                        print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; no trimming will be performed.')
+                        print('#"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; no trimming will be performed.')
                         return msa              # If the user isn't expecting a returned object this should just disappear; if they want a file out, we won't modify it
                 elif skipOrDrop.lower() == 'drop':
-                        print('"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; msa will be dropped.')
+                        print('#"' + os.path.basename(msaFastaIn) + '" can\'t be trimmed at this pctTrim value since no columns contain this proportion of sequences; msa will be dropped.')
                         return None
         # Compare our MSA length post-trimming to our specified cut-offs to determine whether we're doing anything to this sequence or not
         seqLen = x - i          # This works out fine in 1-based notation
@@ -347,18 +289,18 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
                 ratio = seqLen / len(msa[0])
                 if ratio < minLength:
                         if skipOrDrop.lower() == 'skip':
-                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; no trimming will be performed.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; no trimming will be performed.')
                                 return msa      # We're not going to make any changes if trimming shortens it too much
                         elif skipOrDrop.lower() == 'drop':
-                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; msa will be dropped.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than minLength proportion cut-off; msa will be dropped.')
                                 return None
         else:
                 if seqLen < minLength:
                         if skipOrDrop.lower() == 'skip':
-                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; no trimming will be performed.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; no trimming will be performed.')
                                 return msa      # As above
                         elif skipOrDrop.lower() == 'drop':
-                                print('"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; msa will be dropped.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" trimming reduces length more than absolute minLength cut-off; msa will be dropped.')
                                 return None
         # Trim our MSA object
         origMsa = copy.deepcopy(msa)    # Since we're going to be making changes to the msa from here on but still might want to return the unedited msa, we need to create a backup
@@ -383,10 +325,10 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
         if indivSeqDrop != None:
                 if len(newMsa) < 2:
                         if skipOrDrop.lower() == 'skip':
-                                print('"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; no trimming will be performed.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; no trimming will be performed.')
                                 return origMsa
                         elif skipOrDrop.lower() == 'drop':
-                                print('"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; msa will be dropped.')
+                                print('#"' + os.path.basename(msaFastaIn) + '" removing gappy sequences according to indivSeqDrop cut-off means we do not have >= 2 sequences in this msa; msa will be dropped.')
                                 return None
                 msa = newMsa
         # Return results either as the MSA object, as an output file, or as both
@@ -468,7 +410,7 @@ def odseq_outlier_detect(msaFileNameList, rScriptDir, tmpDir, threshold, distMet
         ## Ensure input parameters are sensible
         # rScriptDir
         if rScriptDir == None:
-                rScriptDir = ''         # We'll assume rScript is locatable in PATH if unspecified
+                rScriptDir = ''         # We'll assume Rscript is locatable in PATH if unspecified
         elif rScriptDir != '' and not (os.path.isfile(os.path.join(rScriptDir, 'Rscript.exe')) or os.path.isfile(os.path.join(rScriptDir, 'Rscript'))):
                 print('odseq_outlier_detect: rScriptDir does not appear to contain the Rscript file.')
                 print('Fix your input and try again.')
@@ -522,7 +464,7 @@ def odseq_outlier_detect(msaFileNameList, rScriptDir, tmpDir, threshold, distMet
         # Create script file
         scriptText = ['library("msa")', 'library("odseq")']
         for fileName in msaFileNameList:
-                fileName = pathlib.Path(fileName).as_posix()    # TESTING: Never used pathlib before, make sure this is correct
+                fileName = pathlib.Path(fileName).as_posix()
                 scriptText.append('filename = "' + fileName + '"')
                 scriptText.append('alig <- readAAMultipleAlignment(filename)')
                 scriptText.append('y <- odseq(alig, threshold = {}, distance_metric = "{}", B = {})'.format(threshold, distMetric.lower(), bootStraps))
@@ -536,8 +478,8 @@ def odseq_outlier_detect(msaFileNameList, rScriptDir, tmpDir, threshold, distMet
         run_odseq = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
         odseqout, odseqerr = run_odseq.communicate()
         odseqout = odseqout.decode("utf-8")
-        if 'FALSE' not in odseqout or 'TRUE' not in odseqout:   # rScript writes module loading details to stderr so we need to check that it worked properly in other ways
-                raise Exception('rScript ODseq error text below' + str(odseqerr.decode("utf-8")))
+        if 'FALSE' not in odseqout and 'TRUE' not in odseqout:  # Rscript writes module loading details to stderr so we need to check that it worked properly in other ways
+                raise Exception('Rscript ODseq error text below' + str(odseqerr.decode("utf-8")))
         # Parse ODseq results
         odseqTable = odseqout.split('[1]')
         if odseqTable[0] == '':
@@ -609,7 +551,7 @@ def msa_outlier_detect(msaFileNameList, statsSave, removeIdentical):
                                                 colScores.append(sumpairs_score(pair))
                                         elif pair[0] == '-' and pair[1] == '-':         # Don't penalise an alignment that has a gap induced by another sequence
                                                 continue
-                                        elif set(msa[a][i:]) == {'-'}:                  # Don't penalise an alignment that has ended; TESTING
+                                        elif set(msa[a][i:]) == {'-'}:                  # Don't penalise an alignment that has ended
                                                 continue
                                         else:                                           # If this induces a gap in another alignment or is gapped itself, penalise it
                                                 gapCount += 1
