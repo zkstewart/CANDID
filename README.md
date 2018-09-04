@@ -45,7 +45,8 @@ Changes that have occurred recently:
 Directions for improvement:
 
 1. Improvement to CANDID is likely only possible now through the assistant function detailed below for combining outputs from multiple runs. The core functionality of the program is complete and I do not have any ideas or plans for adding new things in.
-2. One little thing: do a bit more testing to see if I should change the convergence detection to stop in the first instance that no changes are detected.
+2. Do a bit more testing to see if I should change the convergence detection to stop in the first instance that no changes are detected.
+3. Change how output files are presented/hide the processing files elsewhere.
 3. Continued updating to this README. Include subheadings like 'How to use', 'Parameter selection', 'HMM database creation', 'CANDID output combining', and anything else that might be relevant.
 
 ## Extra programs under development for assisting CANDID operations
