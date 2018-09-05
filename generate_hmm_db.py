@@ -291,8 +291,7 @@ def create_blank_file(fileName):
 cddPrefixes = ('cd', 'COG', 'KOG', 'LOAD', 'MTH', 'pfam', 'PHA', 'PRK', 'PTZ', 'sd', 'smart', 'TIGR', 'PLN', 'CHL')
 
 #### USER INPUT SECTION
-usage = """Usage: <output directory> [-options]
-----
+usage = """
 %(prog)s is designed to easily facilitate the conversion of the CDD and 
 SUPERFAMILY/CATH into a format compatible with HMMER 3.1+. %(prog)s will
 attempt to automatically continue previously cancelled runs at the nearest completed
