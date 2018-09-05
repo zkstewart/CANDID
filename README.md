@@ -14,7 +14,7 @@ CANDID operates as a pipeline which calls quite a few external programs and reso
 * Python 2.7
 * CD-Hit
 * HMMER 3.1+ [Needs testing with 3.2 to ensure everything is alright]
-* Pre-constructed HMM database of known domains [Put hmm_db_download.py script in this repository after updates]
+* Pre-constructed HMM database of known domains
 * SignalP 4.1
 * seg (ftp://ftp.ncbi.nih.gov/pub/seg/seg)
 * psCoils (http://www.biocomp.unibo.it/piero/PS-COILS/download)
