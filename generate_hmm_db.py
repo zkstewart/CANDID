@@ -6,12 +6,14 @@
 # (https://github.com/zkstewart/CANDID) but has more generalised uses as well.
 
 # Import external packages
-import argparse, os, shutil
+import argparse, os
 
 # Define functions for later use
 # Argument validation
 def validate_args(args):
         import os
+        # Get the full path of outdir argument
+        args.outdir = os.path.abspath(args.outdir)
         # Validate program execution is successful
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
         # Validate that SUPERFAMILY and/or CATH files are locatable if specified
@@ -20,16 +22,19 @@ def validate_args(args):
                         print('"' + args.superfamily + '" was not able to be located.')
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
+                args.superfamily = os.path.abspath(args.superfamily)    # Use the full path to make later options easier
         if args.cath != None:
                 if not os.path.isfile(args.cath):
                         print('"' + args.cath + '" was not able to be located.')
                         print('Make sure you\'ve typed the file name or location correctly and try again.')
                         quit()
+                args.cath = os.path.abspath(args.cath)
         # Validate that integer arguments are sensible
         if args.threads < 1:
                 print('Threads argument must be an integer greater than 0.')
                 print('Fix your input and try again.')
                 quit()
+        return args
 
 def program_execution_check(cmd):
         import subprocess
@@ -44,23 +49,23 @@ def program_execution_check(cmd):
                 quit()
 
 # HMM generation-related functions
-def fasta_dl(args, filename):
-        # Function adapted from https://stackoverflow.com/questions/32288113/python-3-how-to-create-a-text-progress-bar-for-downloading-files
+def file_dl(url, outdir, filename):
+        'Function adapted from https://stackoverflow.com/questions/32288113/python-3-how-to-create-a-text-progress-bar-for-downloading-files'
+        # Set up
         import urllib.request, os, traceback
-        print('Downloading CDD ' + filename + ' file...')
-        url = args.url
+        print('# Downloading "' + filename + '"...')
+        # Extract file information
         u = urllib.request.urlopen(url)
         meta = u.info()
         metaInfo = str(meta).split()
-        print ("Download size: " + str(round(int(metaInfo[3])/1000000, 1)) + " megabytes")
         fileTotalbytes=int(metaInfo[3])
-
+        print ("# Download size: " + str(round(int(metaInfo[3])/1000000, 1)) + " megabytes")
+        # Main download loop [try:except clause is used to delete the file if the download fails]
         data_blocks = []
         total=0
-        # Put rest of function in try:except clause to delete the file if the download fails
         try:
                 # Open output file
-                out_name = os.path.join(args.outdir, filename)
+                out_name = os.path.join(outdir, filename)
                 f = open(out_name, "wb")
                 # Download loop
                 while True:
@@ -68,7 +73,7 @@ def fasta_dl(args, filename):
                         data_blocks.append(block)
                         total += len(block)
                         hash = ((60*total)//fileTotalbytes)
-                        print("[{}{}] {}%".format('#' * hash, ' ' * (60-hash), int(total/fileTotalbytes*100)), end="\r")
+                        print("# [{}{}] {}%".format('#' * hash, ' ' * (60-hash), int(total/fileTotalbytes*100)), end="\r")
 
                         # Save to file as we go to reduce memory usage
                         if len(data_blocks) == 10000:   # Saves every 10mb
@@ -86,249 +91,213 @@ def fasta_dl(args, filename):
                 print('')
         except:
                 var = traceback.format_exc()
-                print("Unexpected error:")
+                print("# Unexpected error:")
                 print(var)
                 f.close()
                 u.close()
                 os.remove(out_name)
                 quit()
 
-def pfam_dl(args, pfam_filename):
-        import urllib.request, os, traceback
-        print('Downloading PFAM ' + filename + ' file...')
-        url = args.pfamurl
-        u = urllib.request.urlopen(url)
-        meta = u.info()
-        #print(str(meta).split())
-        metaInfo = str(meta).split()
-        #print(len(metaInfo))
-        print ("Download size: " + str(round(int(metaInfo[3])/1000000, 1)) + " megabytes")
-        fileTotalbytes=int(metaInfo[3])
-
-        data_blocks = []
-        total=0
-        # Put rest of function in try:except clause to delete the file if the download fails
-        try:
-                # Open output file
-                out_name = os.path.join(args.outdir, filename)
-                f = open(out_name, "wb")
-                # Download loop
-                while True:
-                        block = u.read(1024)
-                        data_blocks.append(block)
-                        total += len(block)
-                        hash = ((60*total)//fileTotalbytes)
-                        print("[{}{}] {}%".format('#' * hash, ' ' * (60-hash), int(total/fileTotalbytes*100)), end="\r")
-
-                        # Save to file as we go to reduce memory usage
-                        if len(data_blocks) == 10000:   # Saves every 10mb
-                                f.write(b''.join(data_blocks))
-                                data_blocks = []
-
-                        # Break out of dl loop when complete
-                        if not len(block):
-                                break
-                
-                # Final save
-                f.write(b''.join(data_blocks))
-                f.close()
-                u.close()
-        except:
-                var = traceback.format_exc()
-                print("Unexpected error:")
-                print(var)
-                f.close()
-                u.close()
-                os.remove(out_name)
-                quit()
-        
-def untar(args, filename, extractdir):
-        import os, tarfile, gzip
-        print('Extracting ' + filename + '...')
-        # Get file details
-        file = filename
-        extract_dir = os.path.join(args.outdir, extractdir)
-        # Jump into output directory
+def untar(outdir, file, skipUntar):
+        # Set up
+        import os, shutil, tarfile, gzip
+        # Main function
         if file.endswith(".tar.gz"):
-                tar = tarfile.open(file, "r:gz")
-                tar.extractall(extract_dir)
-                tar.close()
+                if skipUntar == False:
+                        tar = tarfile.open(file, "r:gz")
+                        tar.extractall(outdir)
+                        tar.close()
+                return os.path.join(outdir, os.path.basename(file[:-7]))
         elif file.endswith(".tar"):
-                tar = tarfile.open(file, "r:")
-                tar.extractall(extract_dir)
-                tar.close()
+                if skipUntar == False:
+                        tar = tarfile.open(file, "r:")
+                        tar.extractall(outdir)
+                        tar.close()
+                return os.path.join(outdir, os.path.basename(file[:-4]))
         elif file.endswith(".tar.bz2"):
-                tar = tarfile.open(file, "r:bz2")
-                tar.extractall(extract_dir)
-                tar.close()
+                if skipUntar == False:
+                        tar = tarfile.open(file, "r:bz2")
+                        tar.extractall(outdir)
+                        tar.close()
+                return os.path.join(outdir, os.path.basename(file[:-8]))
         elif file.endswith(".gz"):
-                with gzip.open(file, "rb") as tar, open(os.path.join(extract_dir, filename[0:-3]), 'wb') as outfile:
-                        for line in tar:
-                                outfile.write(line)
+                if skipUntar == False:
+                        with gzip.open(file, "rb") as tar, open(os.path.join(outdir, os.path.basename(file[0:-3])), 'wb') as fileOut:
+                                for line in tar:
+                                        fileOut.write(line)
+                return os.path.join(outdir, os.path.basename(file[0:-3]))
         else:
-                print('I don\'t recognise the file format for ' + filename)
-                print('This script assume it is compressed with .tar, .tar.gz, or .tar.bz2 extension')
-                print('To proceed further, I recommend you uncompress this file yourself into a directory titled')
-                print(extract_dir)
-                print('and then re-run this script, as it will automatically detect this directory.')
+                if skipUntar == False:
+                        print('## "' + file + '" does not have an extension I recognise for decompression; I assume this has already occurred.')
+                        if not os.path.isfile(os.path.join(outdir, os.path.basename(file))):
+                                print('## I will make a copy of this file to the specified outdir "' + outdir + '".')
+                                shutil.copy(file, outdir)
+                        else:
+                                print('## A file with name "' + os.path.basename(file) + '" exists at the specified outdir "' + outdir + '".')
+                                print('## I won\'t overwrite this file; if this isn\'t the most up-to-date version of this file, you\'ll need to delete it and re-run this program.')
+                return os.path.join(outdir, os.path.basename(file))
 
-def hmmbuild(args, filename):
-        # Define thread function for later use
-        def build_loop(loop_args, startNum, endNum):
-                import subprocess, os
-                for i in range(startNum, endNum):
-                # Loop through all individual msas to produce hmms
-                        file_prefix = '.'.join(loop_args[2][i].split('.')[0:-1])
-                        # Continue from previous run if cancelled
-                        hmmout_name = os.path.join(loop_args[1], file_prefix + '.hmm')
-                        if os.path.isfile(hmmout_name):
-                                if os.path.getsize(hmmout_name) != 0:
+def cluster_hmms(msaDir, hmmer3dir):
+        # Set up
+        import os, subprocess
+        # Build HMMs from MSA directory
+        msaFastas = os.listdir(msaDir)
+        hmms = []
+        for msa in msaFastas:
+                outputFileName = msa.rsplit('.', maxsplit=1)[0] + '.hmm'
+                hmms.append(outputFileName)
+                # Format cmd
+                cmd = os.path.join(hmmer3dir, 'hmmbuild') + ' "' + os.path.join(msaDir, outputFileName) + '" "' + os.path.join(msaDir, msa) + '"'
+                # Run hmmbuild
+                run_hmmbuild = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
+                hmmout, hmmerr = run_hmmbuild.communicate()
+                if hmmerr.decode("utf-8") != '':
+                        raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -h3dir argument if this directory is not in your PATH')
+
+def hmmbuild_dir(msaDir, hmmOutDir, hmmer3dir, threads):
+        # Set up
+        import os, threading, math, subprocess
+        # Define functions integral to this one
+        def run_hmmbuild_dir(fileNameList, msaDir, outputDir, start, end):
+                for msa in fileNameList[start:end]:
+                        outputFileName = os.path.join(outputDir, msa.rsplit('.', maxsplit=1)[0] + '.hmm')
+                        # Enable resumption of a previously failed run
+                        if os.path.isfile(outputFileName):
+                                if os.path.getsize(outputFileName) != 0:
                                         continue
-                        cmd = loop_args[3] + ' ' + hmmout_name + ' ' + os.path.join(loop_args[0], loop_args[2][i])
+                        # Format cmd
+                        cmd = os.path.join(hmmer3dir, 'hmmbuild') + ' "' + os.path.join(outputFileName) + '" "' + os.path.join(msaDir, msa) + '"'
+                        # Run hmmbuild
                         run_hmmbuild = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
                         hmmout, hmmerr = run_hmmbuild.communicate()
-                        # Error handler (inside loop)
                         if hmmerr.decode("utf-8") != '':
-                                raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -hmmer3dir argument if this directory is not in your PATH. The program crashed when processing file ' + file_prefix)
-                        
-        # Continue defining the thread function-using function
-        import os, threading
-        print('Building individual HMMs from ' + filename + ' MSAs...')
-        # Get file details
-        extract_dir = os.path.join(args.outdir, 'cdd_extraction')
-        ind_hmm_dir = os.path.join(args.outdir, 'cdd_individual_models')
-        extracted_msas = os.listdir(extract_dir)
-        cmd_prefix = os.path.join(args.hmmer3dir, 'hmmbuild')
-        dirsize = len(extracted_msas)
+                                raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the hmmer3dir argument if this directory is not in your PATH.\nProgram crashed when processing "' + outputFileName + '".')
+        # Get our directory's file contents exclusive of marker file
+        msaFileNames = []
+        for file in os.listdir(msaDir):
+                if not file.endswith('.complete'):
+                        msaFileNames.append(file)
+        # Validate that file inputs are correct
+        for file in msaFileNames:
+                if os.path.isdir(file) == True:
+                        print('hmmbuild_dir: A directory exists within "' + msaDir + '"; only files should exist here.')
+                        print('The culprit is "' + file + '". Move or delete this directory and try again.')
+                        quit()
         # Set up threading requirements
-        threads = args.threads
-        chunk_size = int(dirsize / threads)
-        loop_args = [extract_dir, ind_hmm_dir, extracted_msas, cmd_prefix, dirsize]
-        processing_threads = []
-        # Begin the loop
+        rawNum = len(msaFileNames) / int(threads)               # In cases where threads > len(msaFileNames), rawNum will be less than 1. numRoundedUp will equal the number of threads, and so we'll end up rounding these to 1. Yay!
+        numRoundedUp = round((rawNum % 1) * threads, 0)         # By taking the decimal place and multiplying it by the num of threads, we can figure out how many threads need to be rounded up to process every MSA
+        breakPoints = [0]                                       # Seed this list with 0 at the start so we can loop through it more easily
+        ongoingCount = 0
         for i in range(threads):
-                start = chunk_size * i
-                if i+1 != threads:
-                        end = chunk_size * (i+1)
+                if i+1 <= numRoundedUp:                                         # i.e., if two threads are being rounded up, we'll round up the first two loops of this
+                        breakPoints.append(math.ceil(rawNum) + ongoingCount)    # Round up the rawNum, and also add our ongoingCount which corresponds to the number of MSA already put into a chunk
+                        ongoingCount += math.ceil(rawNum)
                 else:
-                        end = dirsize
-                build = threading.Thread(target=build_loop, args=(loop_args, start, end))
+                        breakPoints.append(math.floor(rawNum) + ongoingCount)
+                        ongoingCount += math.floor(rawNum)
+                if ongoingCount >= len(msaFileNames):                           # Without this check, if we have more threads than MSA files, we can end up with "extra" numbers in the list (e.g., [1, 2, 3, 4, 5, 6, 6, 6, 6, 6]).
+                        break  
+        # Begin the loop
+        processing_threads = []
+        ongoingCount = 0    # This will keep track of what MSA number we are on
+        for i in range(len(breakPoints) - 1):                                   # This lets us dictate how many threads we actually run since the user may have specified more threads than MSAs
+                start = breakPoints[i]
+                end = breakPoints[i+1]
+                build = threading.Thread(target=run_hmmbuild_dir, args=(msaFileNames, msaDir, hmmOutDir, start, end))
                 processing_threads.append(build)
                 build.start()
-                print('Initiated thread num ' + str(i+1) + ' for individual hmm building...')
 
         # Wait for all threads to end.
         for process_thread in processing_threads:
                 process_thread.join()
-        print('Individual HMM building completed')
 
-def filenum_check(args):
+def filenum_check(directory1, directory2):
+        # Set up
         import os
-        # Get the directory of the cdd extraction & count how many files are present
-        extract_dir = os.path.join(args.outdir, 'cdd_extraction')
-        extracted_msas = os.listdir(extract_dir)
-        extr_count = len(extracted_msas)
-        # Get the directory of the cdd individual models & count how many files are present
-        ind_hmm_dir = os.path.join(args.outdir, 'cdd_individual_models')
-        hmms = os.listdir(ind_hmm_dir)
-        hmm_count = len(hmms)
-        # Return error message if the two values do not correspond
-        if extr_count != hmm_count:
-                return 'Error'
+        # Count the number of files in each directory exclusive of '.complete' files [these are our marker files that the process completed successfully and shouldn't count]
+        dir1Files = os.listdir(directory1)
+        dir1Count = 0
+        for i in range(len(dir1Files)):
+                if not dir1Files[i].endswith('.complete'):
+                        dir1Count += 1
+        dir2Files = os.listdir(directory2)
+        dir2Count = 0
+        for i in range(len(dir2Files)):
+                if not dir2Files[i].endswith('.complete'):
+                        dir2Count += 1
+        # Return True if the two values were identical, else False
+        if dir1Count == dir2Count:
+                return True
         else:
-                return 'Success'
-        
-def concat_hmms(args):
-        import os
-        print('Concatenating individual HMMs into a single .hmm...')
-        # Get file details
-        ind_hmm_dir = os.path.join(args.outdir, 'cdd_individual_models')
-        ind_hmms = os.listdir(ind_hmm_dir)
-        outhmm_name = os.path.join(args.outdir, 'cdd_db', 'CDD.hmm')
-        outhmm_file = open(outhmm_name, 'w')
-        # Concatenate files
-        for ind_hmm in ind_hmms:
-                outhmm_file.write(open(os.path.join(ind_hmm_dir, ind_hmm), 'r').read())
-        outhmm_file.close()
+                return False
 
-def convert(args, extractdir):
+def concat_hmms(hmmFilesDirList, concatOutDir, concatFileName):
+        # Set up
+        import os
+        # Ensure hmmFilesDirList is properly formatted
+        if type(hmmFilesDirList) == str:
+                hmmFilesDirList = [hmmFilesDirList]
+        elif type(hmmFilesDirList) != list:
+                print('concat_hmms: hmmFilesDirList type is not recognisable. It should be a list, but instead it is ' + str(type(hmmFilesDirList)) + '.')
+                print('Fix your input and try again.')
+                quit()
+        if hmmFilesDirList == []:
+                print('concat_hmms: hmmFilesDirList is empty. I don\'t know what to do in this situation since it shouldn\'t happen.')
+                print('Code your call to this function properly to skip it.')
+                quit()
+        # Get file details from each directory
+        hmmFiles = []
+        for value in hmmFilesDirList:
+                if os.path.isdir(value) == True:
+                        hmmDirFiles = os.listdir(value)
+                        for hmm in hmmDirFiles:
+                                hmmFiles.append(os.path.join(value, hmm))
+                else:
+                        hmmFiles.append(value)
+        concatHmmName = os.path.join(concatOutDir, concatFileName)
+        # Concatenate HMMs
+        with open(concatHmmName, 'w') as fileOut:
+                for hmm in hmmFiles:
+                        fileOut.write(open(hmm, 'r').read())
+
+def convert_hmm_db(hmmDbFileIn, hmmDbFileOut):
+        # Set up
         import subprocess, os
-        print('Converting SUPERFAMILY database to HMMER 3.1 version...')
-        # Get file details
-        if args.superfamily.endswith('.gz'):
-                supfam_name = args.superfamily[0:-3]                # If, for whatever reason, SUPERFAMILY either is compressed with something other than just gz, or if it has already been decompressed and the user is providing its uncompressed name as an argument, we need to handle its file name
-        else:
-                supfam_name = args.superfamily                          # I assume that, if the file name doesn't end with .gz, it was already decompressed. This may cause issues if SUPERFAMILY is distributed with another type of compression in the future.
-        file_in = os.path.join(args.outdir, extractdir, supfam_name)
-        out_name = file_in + '_3.1'
         # Format command
-        cmd_prefix = os.path.join(args.hmmer3dir, 'hmmconvert')
-        cmd = os.path.join(args.hmmer3dir, 'hmmconvert') + ' ' + file_in + ' > ' + out_name
+        cmd = os.path.join(args.hmmer3dir, 'hmmconvert') + ' ' + hmmDbFileIn + ' > ' + hmmDbFileOut
         # Run
         run_hmmconvert = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
         hmmout, hmmerr = run_hmmconvert.communicate()
         # Error handler (inside loop)
         if hmmerr.decode("utf-8") != '':
-                raise Exception('hmmconvert error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -hmmer3dir argument if this directory is not in your PATH')
+                raise Exception('hmmconvert error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the hmmer3dir argument if this directory is not in your PATH')
 
-def concat_additional(args):
-        import os
-        print('Concatenating additional HMM databases into a single .hmm...')
-        # Open CDD hmm for append
-        cddhmm_name = os.path.join(args.outdir, 'cdd_db', 'CDD.hmm')
-        cddhmm_file = open(cddhmm_name, 'a')
-        # Concatenate SUPERFAMILY file if arguments were provided
-        if args.superfamily != 'n':
-                print('Concatenating SUPERFAMILY...')
-                if args.superfamily.endswith('.gz'):
-                        supfam_name = args.superfamily[0:-3]
-                else:
-                        supfam_name = args.superfamily
-                if supfam_name.endswith('_3.1'):
-                        donothing = 0
-                else:
-                        supfam_name += '_3.1'
-                supfam_hmm_name = os.path.join(args.outdir, 'superfamily_extraction', supfam_name)
-                supfam_hmm_file = open(supfam_hmm_name, 'r')
-                for line in supfam_hmm_file:
-                        cddhmm_file.write(line)
-                supfam_hmm_file.close()
-        # Concatenate CATH file if arguments were provided
-        if args.cath != 'n':
-                print('Concatenating CATH...')
-                if args.cath.endswith('.gz'):
-                        cath_name = args.cath[0:-3]
-                else:
-                        cath_name = args.cath
-                cath_hmm_name = os.path.join(args.outdir, 'cath_extraction', cath_name)
-                cath_hmm_file = open(cath_hmm_name, 'r')
-                for line in cath_hmm_file:
-                        cddhmm_file.write(line)
-                cath_hmm_file.close()
-        cddhmm_file.close()
-                
-        # Leave a note saying that the CDD file also includes SUPERFAMILY/CATH
-        note_name = os.path.join(args.outdir, 'cdd_db', 'note.txt')
-        note_file = open(note_name, 'w')
-        if args.superfamily != 'n':
-                note_file.write('This .hmm file contains SUPERFAMILY models as well\n')
-        if args.superfamily != 'n':
-                note_file.write('This .hmm file contains CATH models as well\n')
-        note_file.close()
+def hmmpress(hmmDbFile, hmmer3dir):
+        # Set up
+        import subprocess
+        # Format command
+        cmd = os.path.join(hmmer3dir, 'hmmpress') + ' -f "' + hmmDbFile + '"'
+        # Run
+        run_hmmpress = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
+        hmmout, hmmerr = run_hmmpress.communicate()
+        if hmmerr.decode("utf-8") != '':
+                raise Exception('hmmpress error text below' + str(hmmerr.decode("utf-8")))
 
-# Import classes from included script folder
-from domfind import hmm_dl
+def create_blank_file(fileName):
+        fileOut = open(fileName, 'w')
+        fileOut.close()
 
-cdd_prefixes = ('cd', 'COG', 'KOG', 'LOAD', 'MTH', 'pfam', 'PHA', 'PRK', 'PTZ', 'sd', 'smart', 'TIGR', 'PLN', 'CHL')    # We use this so we can tell if the user has been using the output directories for anything other than the program. It won't be entirely foolproof, but it should prevent anything major.
+# Define tuple which may be useful later to tell if the user has been using the output directories for anything other than the program; it won't be entirely foolproof, but it should prevent major mistakes from occurring
+cddPrefixes = ('cd', 'COG', 'KOG', 'LOAD', 'MTH', 'pfam', 'PHA', 'PRK', 'PTZ', 'sd', 'smart', 'TIGR', 'PLN', 'CHL')
 
 #### USER INPUT SECTION
 usage = """Usage: <output directory> [-options]
 ----
-%(prog)s is designed to easily facilitate the conversion of the CDD into a format
-compatible with HMMER 3.1+. %(prog)s will attempt to automatically continue previously
-cancelled runs at the nearest completed step. This script is easily hackable to add your
-own msa files into the cdd_extraction directory to create .hmm models, or to add your own
-.hmm models to the cdd_individual_models directory to add these to the final CDD.hmm file.
+%(prog)s is designed to easily facilitate the conversion of the CDD and 
+SUPERFAMILY/CATH into a format compatible with HMMER 3.1+. %(prog)s will
+attempt to automatically continue previously cancelled runs at the nearest completed
+step. This script is easily hackable to add or remove msa files in the cdd_extraction
+directory to alter the output .hmm file.
 """
 
 # This directory MUST be dedicated solely to this program; if this program encounters an error, certain directories and their contents will be removed
@@ -340,109 +309,180 @@ p.add_argument("outdir", type = str, help="""Specify the name of the directory t
                should specify the directory it is contained within, noting that this directory should be
                dedicated solely to this program's operations""")
 # Optional cmds
-p.add_argument("-h", dest="hmmer3dir", type = str, default = '',
+p.add_argument("-hmm", "-hmmer3dir", dest="hmmer3dir", type = str, default = '',
                   help="Specify the directory where HMMER3 executables are located. If this is already in your PATH, you can leave this blank.")
-p.add_argument("-t",  dest="threads", type = int, default = 1,
+p.add_argument("-t",  "-threads", dest="threads", type = int, default = 1,
                   help="Optionally specify the number of worker threads when performing the individual HMM building step.")
-p.add_argument("-s",  dest="superfamily", type = str, default = None,
+p.add_argument("-s",  "-superfamily", dest="superfamily", type = str, default = None,
                   help="""Optionally specify the location of the SUPERFAMILY HMM file if you
                   want to incorporate these models into the final HMM database file.""")
-p.add_argument("-c", dest="cath", type = str, default = None,
+p.add_argument("-c", "-cath", dest="cath", type = str, default = None,
                   help="""Optionally specify the name of the CATH HMM file if you want to
                    want to incorporate these models into the final HMM database file.""")
-p.add_argument("-r", dest="clean", action = "store_true", default = False,
-                  help="Provide this tag if you wish for all intermediate files to be removed once the final CDD.hmm file is created.")
 # Future proofing
-p.add_argument("-u", dest="url", type = str, default = 'ftp://ftp.ncbi.nih.gov/pub/mmdb/cdd/fasta.tar.gz',
+p.add_argument("-u", "-url", dest="url", type = str, default = 'ftp://ftp.ncbi.nih.gov/pub/mmdb/cdd/fasta.tar.gz',
                   help="""If the CDD fasta.tar.gz url location changes in the future, specify the new url using this option.
                   Otherwise, do not specify this argument.""")
 
 args = p.parse_args()
-cdd_filename = os.path.basename(args.url)
-#if args.superfamily != 'n':
-#        superfamily_filename = os.path.basename(args.superfamily)       
+args = validate_args(args)
+
+### PROGRAM SET UP
 
 # Create output directory if needed
 if not os.path.isdir(args.outdir):
         os.mkdir(args.outdir)
 
-#### CORE PROCESSES
+# Figure out our file names and directories
+cddFileName = os.path.basename(args.url)
+cddExtractDir = os.path.join(args.outdir, 'cdd_extraction')
+cddHmmDir = os.path.join(args.outdir, 'cdd_individual_models')
+spfamExtractDir = os.path.join(args.outdir, 'superfamily_extraction')
+cathExtractDir = os.path.join(args.outdir, 'cath_extraction')
 
-### CHECK IF RUNNING THIS IS NECESSARY
-if os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
-        print('The CDD.hmm file is already present in this directory. Specify a new output directory, or delete this file if it is outdated.')
-        quit()
+### CDD HANDLING
 
-### DOWNLOAD CDD
 # Download
-if not os.path.isfile(os.path.join(args.outdir, cdd_filename)):
-        hmm_dl.fasta_dl(args, cdd_filename)
+if not os.path.isfile(os.path.join(args.outdir, cddFileName)):
+        print('# Downloading CDD files')
+        file_dl(args.url, args.outdir, cddFileName)
 
-# Untar
-if not os.path.isdir(os.path.join(args.outdir, 'cdd_extraction')):
-        os.mkdir(os.path.join(args.outdir, 'cdd_extraction'))
+# Untar CDD
+if not os.path.isdir(cddExtractDir):
+        os.mkdir(cddExtractDir)
+if not os.path.isfile(os.path.join(cddExtractDir, 'cdd_untar.complete')):               # This should let us know if untarring was previously performed successfully while still being "hackable" by removing unwanted models from the directory
         try:
-                hmm_dl.untar(args, os.path.join(args.outdir, cdd_filename), 'cdd_extraction')
-        except Exception, e:
-                #shutil.rmtree(os.path.join(args.outdir, 'cdd_extraction'))      # This could be dangerous if this directory were being used for something other than this program...
-                print('Untarring file ' + os.path.join(args.outdir, cdd_filename) + ' failed. Check the error log below')
+                print('# Decompressing CDD files')
+                untar(cddExtractDir, os.path.join(args.outdir, cddFileName), False)     # We don't care about returning the updated file name from the untar function
+                create_blank_file(os.path.join(cddExtractDir, 'cdd_untar.complete'))    # This relates to ^^
+        except Exception as e:
+                print('Decompressing file "' + cddFileName + '" to "' + cddExtractDir + ' failed. Check the error log below')
                 print(str(e))
-                # Delete the temporary file(s) intelligently
-                tmpdir_contents = os.listdir(os.path.join(args.outdir, 'cdd_extraction'))
-                safe = 'y'
-                for file in tmpdir_contents:
-                        if not file.startswith(cdd_prefixes) and not file.lower().endswith('.fasta'):
-                                print('I think I can detect files in the ' + os.path.join(args.outdir, 'cdd_extraction') + ' directory that should not exist (i.e., ' + file + ')')
-                                print('Are you using this directory for anything other than this script? Move this file and any similar ones out of it to resume the program.')
+                # Delete the file(s) intelligently
+                tmpdirContents = os.listdir(cddExtractDir)
+                for file in tmpdirContents:
+                        if not file.startswith(cddPrefixes) and not file.lower().endswith('.fasta') and file != 'cdd_untar.complete':
+                                print('I think I can detect files in "' + cddExtractDir + '" that should not exist (i.e., ' + file + ')')
+                                print('Are you using this directory for anything other than this script? Move or delete all files in this directory to resume the program.')
                                 quit()
-                
-if args.superfamily != 'n' and not os.path.isdir(os.path.join(args.outdir, 'superfamily_extraction')):
-        os.mkdir(os.path.join(args.outdir, 'superfamily_extraction'))
-        hmm_dl.untar(args, args.superfamily, 'superfamily_extraction')
 
-if args.cath != 'n' and not os.path.isdir(os.path.join(args.outdir, 'cath_extraction')):
-        os.mkdir(os.path.join(args.outdir, 'cath_extraction'))
-        hmm_dl.untar(args, args.cath, 'cath_extraction')
+### OPTIONAL DB HANDLING
 
-### BUILD HMM MODEL
-# Individual HMM construction from CDD MSAs
-if not os.path.isdir(os.path.join(args.outdir, 'cdd_individual_models')):
-        os.mkdir(os.path.join(args.outdir, 'cdd_individual_models'))
+# SUPERFAMILY
+if args.superfamily != None:
+        if not os.path.isdir(spfamExtractDir):
+                os.mkdir(spfamExtractDir)
+        if not os.path.isfile(os.path.join(spfamExtractDir, 'superfamily_untar.complete')):
+                try:
+                        print('# Decompressing SUPERFAMILY files')
+                        args.superfamily = untar(spfamExtractDir, args.superfamily, False)              # This gives us the new location of the decompressed file
+                        create_blank_file(os.path.join(spfamExtractDir, 'superfamily_untar.complete'))
+                except Exception as e:
+                        print('Decompressing file "' + args.superfamily + '" to "' + spfamExtractDir + ' failed. Check the error log below')
+                        print(str(e))
+                        # Delete the file(s) intelligently
+                        tmpdirContents = os.listdir(spfamExtractDir)
+                        for file in tmpdirContents:
+                                if file != 'hmmlib' and file != 'superfamily_untar.complete':           # SUPERFAMILY's file is currently called 'hmmlib'; the only other file that could be here (but shouldn't if we are handling an exception) is the .complete file
+                                        print('I think I can detect files in "' + spfamExtractDir + '" that should not exist (i.e., ' + file + ')')
+                                        print('Are you using this directory for anything other than this script? Move or delete all files in this directory to resume the program.')
+                                        quit()
+        else:
+                args.superfamily = untar(spfamExtractDir, args.superfamily, True)                       # True lets us skip the decompression step while still obtaining our file name in the output directory minus compression extension
+                                                                                                        # This might be relevant when the user resumes a run that failed without updating their input arguments
+# CATH
+if args.cath != None:
+        if not os.path.isdir(cathExtractDir):
+                os.mkdir(cathExtractDir)
+        if not os.path.isfile(os.path.join(cathExtractDir, 'cath_untar.complete')):
+                try:
+                        print('# Decompressing CATH files')
+                        args.cath = untar(cathExtractDir, args.cath, False)                             # This gives us the new location of the decompressed file
+                        create_blank_file(os.path.join(cathExtractDir, 'cath_untar.complete'))
+                except Exception as e:
+                        print('Decompressing file "' + args.cath + '" to "' + cathExtractDir + ' failed. Check the error log below')
+                        print(str(e))
+                        # Delete the file(s) intelligently
+                        tmpdirContents = os.listdir(cathExtractDir)
+                        for file in tmpdirContents:
+                                if not file.endswith('.lib') and file != 'cath_untar.complete':         # CATH's file is currently called 'jackhmmer.S##.hmm3.lib'
+                                        print('I think I can detect files in "' + cathExtractDir + '" that should not exist (i.e., ' + file + ')')
+                                        print('Are you using this directory for anything other than this script? Move or delete all files in this directory to resume the program.')
+                                        quit()
+        else:
+                args.cath = untar(cathExtractDir, args.cath, True)
 
-#if not os.path.isdir(os.path.join(args.outdir, 'cdd_db')):
-#        hmm_dl.hmmbuild(args, cdd_filename)
-hmm_dl.hmmbuild(args, cdd_filename)     # We can afford to spend a bit of time validating that the files are not 0kb (which is all we do if this step has been previously completed)
+### BUILD CDD HMM DB
+
+# Create directory and build our CDD HMM models
+if not os.path.isdir(cddHmmDir):
+        os.mkdir(cddHmmDir)
+
+print('# Converting CDD fasta to HMM & validating')
+hmmbuild_dir(cddExtractDir, cddHmmDir, args.hmmer3dir, args.threads)            # We can afford to spend a bit of time validating that the files are not 0kb (which is all we do if this step has been previously completed)
 
 # Check that all HMMs are present
-buildresult = hmm_dl.filenum_check(args)
-if buildresult == 'Error':
-        print('Not all MSAs present in the ' + os.path.join(args.outdir, 'cdd_extraction') + ' directory appear to have built HMMs successfully. Recommend that you re-run the program to fix this and identify the problem file(s).')
+success = filenum_check(cddExtractDir, cddHmmDir)
+if success == False:
+        print('Not all MSAs present in the "' + cddExtractDir + '" directory appear to have been converted into HMMs successfully. Recommend that you re-run the program to automatically fix this and identify the problem file(s).')
         quit()
-else:
-        print('Validated that HMM building appears to have worked.')
+print('# Validated that HMM building appears to have worked.')
 
 # Concatenate individual CDD HMMs
-#if not os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
-if not os.path.isdir(os.path.join(args.outdir, 'cdd_db')):
-        os.mkdir(os.path.join(args.outdir, 'cdd_db'))
-        hmm_dl.concat_hmms(args)
+print('# Concatenating individual CDD HMM models into a single large HMM file')
+dbFileName = os.path.join(args.outdir, 'CDD.hmm')                               # If we don't add SUPERFAMILY/CATH to this file, this will be our final database name
+if not os.path.isfile(os.path.join(args.outdir, 'cdd_hmm.complete')) or not os.path.isfile(os.path.join(args.outdir, 'CDD.hmm')):
+        concat_hmms(cddHmmDir, args.outdir, 'CDD.hmm')
+        create_blank_file(os.path.join(args.outdir, 'cdd_hmm.complete'))
+else:
+        print('## A "CDD.hmm" file is already present in outdir "' + args.outdir + '". I won\'t overwrite this file.')
+        print('## Specify a new outdir, move the file elsewhere, or delete this file if it is outdated.')
 
-# Concatenate any additional databases specified (SUPERFAMILY, CATH) into the .hmm file (oh boy is this going to be large!)
-# Convert SUPERFAMILY to 3.1
-if args.superfamily != 'n':
-        if args.superfamily.endswith('_3.1'):
-                donothing = 0
-        elif args.superfamily.endswith('.gz'):
-                if not os.path.isfile(os.path.join(args.outdir, 'superfamily_extraction', args.superfamily[0:-3] + '_3.1')):
-                        hmm_dl.convert(args, 'superfamily_extraction')
-        else:
-                if not os.path.isfile(os.path.join(args.outdir, 'superfamily_extraction', args.superfamily + '_3.1')):
-                        hmm_dl.convert(args, 'superfamily_extraction')
+### CONCATENATE ADDITIONAL DBs
+
+# Convert SUPERFAMILY to 3.1 if relevant
+if args.superfamily != None:
+        if not args.superfamily.endswith('_3.1'):                               # If this already has _3.1 suffix, I'll assume someone already converted it using this program and are re-running this program using this file as an input
+                if not os.path.isfile(os.path.join(spfamExtractDir, 'supfam_conv.complete')) or not os.path.isfile(args.superfamily + '_3.1'):  # args.superfamily already has the full path leading to it
+                        print('# Making SUPERFAMILY HMM file compatible with HMMER 3.1+')
+                        convert_hmm_db(args.superfamily, args.superfamily + '_3.1')
+                        create_blank_file(os.path.join(spfamExtractDir, 'supfam_conv.complete'))
+                        args.superfamily = args.superfamily + '_3.1'
+                else:
+                        args.superfamily = args.superfamily + '_3.1'            # If we are resuming a run which failed in a step below and the user doesn't update their input, we need to make sure we use the converted file
 
 # Combine files
-if args.superfamily != '\n' or args.cath != '\n':
-        hmm_dl.concat_additional(args)
+if args.superfamily != None or args.cath != None:
+        # Format our function inputs and concatenated HMM name
+        additionalHmms = []
+        concatFileName = 'CDD'
+        if args.superfamily != None:
+                additionalHmms.append(args.superfamily)
+                concatFileName += '_SUPFAM'
+        if args.cath != None:
+                additionalHmms.append(args.cath)
+                concatFileName += '_CATH'
+        concatFileName += '.hmm'
+        print('# Concatenating additional database(s) into final HMM file inclusive of:')
+        if args.superfamily != None:
+                print('# > SUPERFAMILY')
+        if args.cath != None:
+                print('# > CATH')
+        # Create concatenated file if relevant
+        if not os.path.isfile(os.path.join(args.outdir, 'added_concat.complete')) or not os.path.isfile(os.path.join(args.outdir, concatFileName)):
+                concat_hmms(additionalHmms, args.outdir, concatFileName)
+                create_blank_file(os.path.join(args.outdir, 'added_concat.complete'))
+        else:
+                print('## A "' + concatFileName + '" file is already present in outdir "' + args.outdir + '". I won\'t overwrite this file.')
+                print('## Specify a new outdir, move the file elsewhere, or delete this file if it is outdated.')
+        dbFileName = os.path.join(args.outdir, concatFileName)                  # This will overwrite the database name from above
 
+### PRESS FINAL FILE
+if not os.path.isfile(os.path.join(args.outdir, 'press.complete')) or (not os.path.isfile(dbFileName + '.h3f') and not os.path.isfile(dbFileName + '.h3i') and not os.path.isfile(dbFileName + '.h3m') and not os.path.isfile(dbFileName + '.h3p')):
+        print('# Running hmmpress to prepare database for use')
+        hmmpress(dbFileName, args.hmmer3dir)
+        create_blank_file(os.path.join(args.outdir, 'press.complete'))
 
 # All done!
-print('Finished formatting a .hmm file representing the CDD (and SUPERFAMILY/CATH if specified). Running the domain_finder.py script will automatically \'hmmpress\' this file for further use.')
+print('# Finished formatting a .hmm file representing the CDD (and SUPERFAMILY/CATH if specified).')
+print('# This is called "' + os.path.basename(dbFileName) + '" and is located at "' + os.path.dirname(dbFileName) + '".')
