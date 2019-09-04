@@ -441,7 +441,7 @@ def main():
         # Combine files
         if args.superfamily != None or args.cath != None:
                 # Format our function inputs and concatenated HMM name
-                additionalHmms = []
+                additionalHmms = [dbFileName] # This will ensure that the CDD db will be included in the final concatenated file
                 concatFileName = 'CDD'
                 if args.superfamily != None:
                         additionalHmms.append(args.superfamily)
