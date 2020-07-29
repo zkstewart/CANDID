@@ -1,3 +1,14 @@
+from alfpy import word_pattern, word_vector, word_distance
+from alfpy.utils import seqrecords, distmatrix
+from alfpy.utils.data import seqcontent
+import os, threading, math, platform, hdbscan, copy
+from Bio import SeqIO
+from Bio.Align.Applications import MafftCommandline
+from Bio import AlignIO
+from Bio.Seq import Seq
+from Bio.Alphabet import SingleLetterAlphabet
+from Bio.Align import MultipleSeqAlignment
+
 def protein_alphabet_reduce(proteinList, reduceNum):
         # Set up
         elevenLetter = {'E':'D','L':'I','M':'I','Q':'K','R':'K','T':'S','V':'I','W':'F','Y':'F'}
@@ -33,10 +44,6 @@ def protein_alphabet_reduce(proteinList, reduceNum):
         return proteinList
 
 def alfree_matrix(fastaFile, wordSize, reduceNum, alfAlgorithm):
-        # Set up
-        from alfpy import word_pattern, word_vector, word_distance
-        from alfpy.utils import seqrecords, distmatrix
-        from alfpy.utils.data import seqcontent
         # Read in unclustered domains file
         unclustDoms = open(fastaFile)
         records = seqrecords.read_fasta(unclustDoms)
@@ -66,7 +73,6 @@ def alfree_matrix(fastaFile, wordSize, reduceNum, alfAlgorithm):
 
 def cluster_hdb(leaf, singleClust, minSize, minSample, matrixList, idList):
         # Set up
-        import hdbscan
         groupDicts = []
         # Convert our input values into relevant parameters
         if leaf == True:
@@ -113,8 +119,6 @@ def cluster_hdb(leaf, singleClust, minSize, minSample, matrixList, idList):
         return groupDicts[0]
 
 def tmpdir_setup(tmpDir):
-        # Set up
-        import os
         # Main function
         if os.path.isdir(tmpDir):
                 for file in os.listdir(tmpDir):
@@ -128,10 +132,6 @@ def tmpdir_setup(tmpDir):
                 os.mkdir(tmpDir)
 
 def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict, algorithm):
-        # Set up
-        import os, threading, math
-        from Bio import SeqIO
-        from Bio.Align.Applications import MafftCommandline
         # Ensure that algorithm value is sensible
         if algorithm != None:   # If this is None, we'll just use default MAFFT
                 if algorithm.lower() not in ['genafpair', 'localpair', 'globalpair']:
@@ -141,7 +141,6 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
         # Define functions integral to this one
         def run_mafft(mafftdir, outputDir, prefix, suffix, fastaFile, startNum, endNum, thread, algorithm):
                 # Set up
-                import platform
                 for i in range(startNum, endNum):
                         # Extract sequences for this cluster and write to file
                         clustIDs = group_dict[i]           # Our group_dict value is indexed by sequential integers, so we can split work load easily by an iterating loop
@@ -214,12 +213,6 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
         we assume it's a ratio, otherwise it is an absolute length. outType influences whether this function returns a Biopython MSA object
         ("obj") or an output file ("file") msaFastaOut is only relevant when outType == file; otherwise it will be ignored
         '''
-        # Set up
-        import os, copy
-        from Bio import AlignIO
-        from Bio.Seq import Seq
-        from Bio.Alphabet import SingleLetterAlphabet
-        from Bio.Align import MultipleSeqAlignment
         # Ensure outType is sensible
         if outType.lower() not in ['obj', 'file', 'both']:
                 print('msa_trim: This function requires an outType to be specified with a specific format.')
