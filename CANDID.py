@@ -114,7 +114,7 @@ def cygwin_program_execution_check(outDir, cygwinDir, exeDir, exeFile):
         scriptText = os.path.join(exeDir, exeFile)
         scriptFile = file_name_gen('tmpscript', '.sh')
         with open(os.path.join(outDir, scriptFile), 'w') as fileOut:
-                fileOut.write(scriptText)
+                fileOut.write(scriptText.replace('\\', '/'))
         # Format cmd for execution
         cmd = os.path.join(cygwinDir, 'bash') + ' -l -c ' + os.path.join(outDir, scriptFile).replace('\\', '/')
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
@@ -719,11 +719,12 @@ earlyExit = False
 if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
         enteredMain = True      # This lets us recognise if we actually entered this loop; if we didn't, all the results have been generated so we won't perform the shutil operations below
         while iterate < 2:      # Main exit condition; if we iterate twice without finding something new, we exit the loop
+                # Optional exit condition to prevent further clustering
+                if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
+                        earlyExit = True
+                        break
                 # Optional exit condition based on loop count
                 if loopCount > args.numiters and args.numiters != 0:
-                        break
-                # Optional exit condition based on user providing early exit signal
-                if earlyExit == True:
                         break
                 # Clustering step
                 if args.hammockdir != '' and args.alf == 'hammock':
@@ -733,7 +734,7 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 else:
                         # HDBSCAN clustering
                         matrixList, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', args.wordsize, args.reduce, args.alf)
-                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, 2, 1, matrixList, idList)
+                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, args.minsize, args.minsample, matrixList, idList)
                 if groupDict == None:
                         noClust = True
                         break
@@ -765,8 +766,12 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                         msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
                         msaFileNameList.append(msaFileName)
                 odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # Values are somewhat arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
-                spOutResults = domclust.msa_outlier_detect(msaFileNameList, True, True)                                                 # The first True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
-                mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)                                          # The second True above removes identical sequences for the purpose of calculating distribution statistics; this helps to prevent a domain being overwhelmed by identicality (it's a word, look it up)
+                try:
+                        spOutResults = domclust.msa_outlier_detect(msaFileNameList, True, True)                                         # The first True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
+                        mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)                                  # The second True above removes identical sequences for the purpose of calculating distribution statistics; this helps to prevent a domain being overwhelmed by identicality (it's a word, look it up)
+                except:
+                        mergedOutlierResults = odSeqResults
+                
                 domclust.curate_msa_from_outlier_dict(mergedOutlierResults, msaFileNameList)
                 # HMMER3 steps
                 domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
@@ -795,9 +800,6 @@ if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaB
                 # Extract new unclustered domains
                 domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta', args.cleanAA)   # Specifying the minimum size (cleanAA) here means we won't extract small regions from our HMMER table
                 loopCount += 1
-                # Extra exit condition for if you change your mind about wanting to wait for convergence; check for file which indicates exit
-                if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
-                        earlyExit = True
 
 # Provide informative loop exit text
 if noClust == True:
