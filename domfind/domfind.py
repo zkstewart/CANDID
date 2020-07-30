@@ -523,7 +523,7 @@ def runmms2(mmseqs2dir, query, target, tmpdir, searchName, params):
         if mms2err.decode("utf-8") != '':
                 raise Exception('MMseqs2 search error text below\n' + mms2err.decode("utf-8"))
 
-def mms2tab(mmseqs2dir, query, target, tmpdir, searchName, threads):
+def mms2tab(mmseqs2dir, query, target, searchName, threads):
         import os, subprocess
         # Get file details
         dbname1 = query + '_queryDB'
@@ -532,7 +532,7 @@ def mms2tab(mmseqs2dir, query, target, tmpdir, searchName, threads):
         else:
                 dbname2 = query + '_queryDB'
         # Create tab-delim BLAST-like output
-        cmd = os.path.join(mmseqs2dir, 'mmseqs') + ' convertalis "' + dbname1 + '" "' + dbname2 + '" "' + searchName + '" "' + searchName + '.m8" "' + tmpdir + '" --threads ' + str(threads)
+        cmd = os.path.join(mmseqs2dir, 'mmseqs') + ' convertalis "' + dbname1 + '" "' + dbname2 + '" "' + searchName + '" "' + searchName + '.m8" --threads ' + str(threads)
         run_mms2 = subprocess.Popen(cmd, shell = True, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE)
         mms2out, mms2err = run_mms2.communicate()
         if mms2err.decode("utf-8") != '':
@@ -579,7 +579,7 @@ def parse_array_peaks(seqArrays, minPlateauSize):
         import math
         import numpy as np
         domDict = {}
-        covRatio = 0.75         # This is an arbitrary value which controls the coverage cutoff for extending and chaining plateaus together
+        covRatio = 0.33         # This is an arbitrary value which controls the coverage cutoff for extending and chaining plateaus together
         # Define functions integral to this one
         def plateau_extens(array, plateaus, coverages, covRatio):
                 import math
