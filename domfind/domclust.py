@@ -992,3 +992,74 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
                 return unclustDict
         else:
                 return None
+
+def parse_mms2tab_to_clusters(mms2Table):
+        import math
+        '''Note: Function currently assumes
+        file is sorted.
+        '''
+        mms2Table = r"F:\toxins_annot\analysis\CANDID\run1\working\candid_input_clean_unclustered_domains_mmseqs2SEARCH.m8"
+        clustDict = {}
+        idPointerDict = {}
+        evalueDict = {}
+        EVALUE_REDUCTION = 2
+        def update_cluster_evalues(clustDict, evalueDict, seqID, newEvalue):
+                clustList = clustDict[seqID]
+                for sid in clustList:
+                        evalueDict[sid] = max([evalueDict[sid], newEvalue])
+                
+        # Load in file as a groupby iterator
+        with open(mms2Table, 'r') as fileIn:
+                for line in fileIn:
+                        if line == "\n":
+                                continue
+                        sl = line.rstrip("\r\n").split("\t")
+                        qid = sl[0]
+                        tid = sl[1]
+                        evalue = float(sl[10])
+                        # Skip self hits
+                        if qid == tid:
+                                continue
+                        # New qid hits
+                        if qid not in clustDict:
+                                # New qid + new tid hits
+                                if tid not in clustDict:
+                                        # Handle qid
+                                        clustList = [qid, tid]
+                                        clustDict[qid] = clustList
+                                        evalueDict[qid] = evalue
+                                        # Handle tid
+                                        clustDict[tid] = clustList
+                                        evalueDict[tid] = evalue
+                                # New qid + old tid hits
+                                else:
+                                        passableEvalue = math.log10(evalueDict[tid]) / EVALUE_REDUCTION
+                                        if math.log10(evalue) <= passableEvalue:
+                                                # Handle qid
+                                                evalueDict[qid] = evalue
+                                                clustDict[qid] = clustDict[tid]
+                                                # Update tid cluster
+                                                clustDict[tid].append(qid)
+                                                update_cluster_evalues(clustDict, evalueDict, tid, evalue)
+                        # Old qid hits
+                        elif qid in clustDict:
+                                # Old qid + new tid hits
+                                if tid not in clustDict:
+                                        passableEvalue = math.log10(evalueDict[qid]) / EVALUE_REDUCTION
+                                        if math.log10(evalue) <= passableEvalue:
+                                                # Handle tid
+                                                evalueDict[tid] = evalue
+                                                clustDict[tid] = clustDict[qid]
+                                                # Update qid cluster
+                                                clustDict[qid].append(tid)
+                                                update_cluster_evalues(clustDict, evalueDict, qid, evalue)
+                                # Old qid + old tid hits
+                                else:
+                                        # Check if E-value is compatible
+                                        passableEvalue1 = math.log10(evalueDict[qid]) / EVALUE_REDUCTION
+                                        passableEvalue2 = math.log10(evalueDict[tid]) / EVALUE_REDUCTION
+                                        if math.log10(evalue) <= passableEvalue1 and math.log10(evalue) <= passableEvalue2:
+                                                # Merge clusters
+                                                clustDict[qid] += clustDict[tid]
+                                                clustDict[tid] = clustDict[qid]
+                                                update_cluster_evalues(clustDict, evalueDict, qid, evalue)
