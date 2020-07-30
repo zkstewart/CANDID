@@ -3,7 +3,7 @@
 # Import external packages
 import argparse, os, time, shutil, copy, platform
 # Import classes from included script folder
-from domfind import benchparse
+#from domfind import benchparse
 from domfind import domtblout_handling, domfind, domclust
 
 # Define functions for later use
@@ -37,10 +37,6 @@ def validate_args(args):
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmsearch -h'))
         program_execution_check(os.path.join(args.hmmer3dir, 'hmmbuild -h'))
         program_execution_check(os.path.join(args.segdir, 'seg'))
-        program_execution_check(os.path.join(args.rscriptdir, 'Rscript'))
-        if args.hammockdir != '':
-                program_execution_check(os.path.join(args.javadir, 'java -h'))
-                program_execution_check(os.path.join(args.javadir, 'java') + ' -jar ' + os.path.join(args.hammockdir, 'Hammock.jar -h'))
         program_execution_check(os.path.join(args.python2dir, 'python -h'))
         python_version_check(args.python2dir)
         program_execution_check(os.path.join(args.python2dir, 'python') + ' ' + os.path.join(args.coilsdir, 'psCoils.py -h'))
@@ -55,7 +51,7 @@ def validate_args(args):
         else:
                 program_execution_check(os.path.join(args.signalpdir, 'signalp -h'))
         # Validate integer arguments
-        intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'minsize', 'minsample', 'numiters', 'cleanAA', 'wordsize']
+        intArgs = ['threads', 'cdn', 'cdg', 'cdm', 'cleanAA']
         for entry in intArgs:
                 if type(vars(args)[entry]) == str:                                      # If these values aren't strings, they were specified on command-line
                         if "'" in vars(args)[entry] or '"' in vars(args)[entry]:        # Handle a plausible mistake the user may make
@@ -87,20 +83,12 @@ def validate_args(args):
                 print('skip must be a value within the below list. Fix this in your config file and try again.')
                 print(['cath', 'superfamily', 'both', 'noskip'])
                 quit()
-        if args.alf not in ['google', 'braycurtis', 'canberra', 'hammock']:
-                print('alf must be a value within the below list. Fix this in your config file and try again.')
-                print(['google', 'braycurtis', 'canberra', 'hammock'])
-                quit()
-        if args.reduce not in ['n', '11', '15']:
-                print('reduce must be a value within the below list. Fix this in your config file and try again.')
-                print(['n', '11', '15'])
-                quit()
 
 def program_execution_check(cmd):
         import subprocess
         run_cmd = subprocess.Popen(cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell = True)
         cmdout, cmderr = run_cmd.communicate()
-        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage') and not cmderr.decode("utf-8").startswith('HAMMOCK') and not 'cannot open -h' in cmderr.decode("utf-8").lower():     # Need these extra checks for seg and Hammock since they put usage information into stderr rather than stdout; with MAFFT, it can't run without a file input
+        if cmderr.decode("utf-8") != '' and not cmderr.decode("utf-8").startswith('Usage') and not 'cannot open -h' in cmderr.decode("utf-8").lower():     # Need these extra checks for seg since it puts usage information into stderr rather than stdout; with MAFFT, it can't run without a file input
                 print('Failed to execute program "' + cmd + '". Is this executable in the location specified/discoverable in your PATH, or does the executable even exist? I won\'t be able to run properly if I can\'t execute this program.')
                 print('---')
                 print('stderr is below for debugging purposes.')
@@ -182,14 +170,13 @@ def default_parameter_dict(inputKey):
         function, or the user specified all necessary arguments on the command-line (which we'll check shortly)
         '''
         defaultParams = {'threads': 1, 'mmseqs2dir': '', 'cdhitdir': '',
-                         'hmmer3dir': '', 'signalpdir': '', 'segdir': '', 'rscriptdir': '',
-                         'cygwindir': '', 'javadir': '', 'mafftdir': '', 'cdc': 0.4,
+                         'hmmer3dir': '', 'signalpdir': '', 'segdir': '', 
+                         'cygwindir': '', 'mafftdir': '', 'cdc': 0.4,
                          'cdn': 2, 'cdg': 0, 'cdas': 0.9, 'cdal': 0.6, 'cdm': 1000,
                          'signalporg': 'euk', 'hmmeval': 1e-1, 'hmmevalnov': 1e-1,
-                         'skip': 'noskip', 'mms2eval': 1e-1, 'alf': 'google', 'reduce': 'n', 'wordsize': 2,
-                         'minsize': 3,'minsample': 2, 'leaf': False, 'singleclust': False,
-                         'numiters': 0, 'cleanAA': 30, 'verbose': False, 'hammockdir': '',      # hammockdir is an exception to the below comment; we don't want to make it mandatory, but if Hammock is being used, we can't specify a default
-                         #'fasta': , 'outdir': None, 'config': None,                            # If hammockdir == '' then we know that we aren't using it, so thi
+                         'skip': 'noskip', 'mms2eval': 1e-1,
+                         'cleanAA': 30, 'verbose': False,
+                         #'fasta': , 'outdir': None, 'config': None,
                          'hmmdb': None,'coilsdir': None, 'python2dir': None}    # This lets us know that we shouldn't be specifying defaults for these arguments
         mandatoryParams = {'fasta': None, 'outdir': None, 'config': None}       # By separating these, this lets us know that these shouldn't be defaulted and shouldn't be in the config file at all
         cmdLineOnlyParams = {'generate_config': None, 'benchmark': None,        # We also separate these since they should not be in the config file but aren't mandatory
@@ -303,13 +290,13 @@ def coord_dict_merge(dict1, dict2):
                 dict1[key] = value
         return dict1
 
-def dict_entry_delete(dictObj, index):
-        # Delete the index
-        del dictObj[index]
-        # Renumber all indices after this
-        for i in range(index, len(dictObj)):
-                dictObj[i] = dictObj.pop(i+1)
-        return dictObj
+# def dict_entry_delete(dictObj, index):
+#         # Delete the index
+#         del dictObj[index]
+#         # Renumber all indices after this
+#         for i in range(index, len(dictObj)):
+#                 dictObj[i] = dictObj.pop(i+1)
+#         return dictObj
 
 def align_files_rename(fileDir, index, prefix, suffix):
         # Set up
@@ -406,9 +393,7 @@ models from discovery. A program 'hmm_db_download.py' is provided to help
 generate this, but you can create your own. Specify the full path to this file.
 ----
 Run this main script using Python 3.x. This script is Windows and Linux
-compatible; at this time, Hammock is not Windows-compatible, so if you
-wish to use Hammock instead of alignment-free clustering, you must use
-another operating system.
+compatible.
 ----
 IMPORTANT: Note that any directories referred to in this program should
 NOT include any spaces in their name (e.g., 'output directory' must be
@@ -448,22 +433,12 @@ p.add_argument("-sigpdir", dest="signalpdir", type = str,
                   help="Specify the directory where signalp executables are located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-segdir", dest="segdir", type = str,
                   help="Specify the directory where seg executables are located. If this is already in your PATH, you can leave this blank.")
-p.add_argument("-rdir", dest="rscriptdir", type = str,
-                  help="Specify the R directory that contains Rscript.exe. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-mafftdir", dest="mafftdir", type = str,
                   help="Specify the directory where the mafft executables on a Unix system or .bat file on a Windows is located. If this is already in your PATH, you can leave this blank.")
 p.add_argument("-py2dir", dest="python2dir", type = str,
                   help="Specify the python2.7 directory that contains python.exe. This MUST be specified here or in your config file.")
 p.add_argument("-coilsdir", dest="coilsdir", type = str,
                   help="Specify the directory where the pscoils .py file is located. This MUST be specified here or in your config file.")
-p.add_argument("-javadir", dest="javadir", type = str,
-                  help="""Specify the directory where the java executable file is located ONLY if you want to use Hammock
-                  instead of alignment-free clustering. If this is already in your PATH, you can leave this blank."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-hammdir", dest="hammockdir", type = str,
-                  help="""Specify the directory where the Hammock.jar file is located ONLY if you want to use Hammock
-                  instead of alignment-free clustering. If so, this MUST be specified here or in your config file."""
-                  if showHiddenArgs else argparse.SUPPRESS)
 p.add_argument("-cwdir", dest="cygwindir", type = str,
                   help="""Cygwin is required since you are running this program on a Windows computer.
                   Specify the location of the bin directory here or, if this is already in your PATH, you can leave this blank."""
@@ -510,44 +485,6 @@ p.add_argument("-skip",dest="skip", type = str, choices = ['cath', 'superfamily'
 p.add_argument("-mms2eval", dest="mms2eval", type = float,
                   help="""Specify the e-value cut-off to enforce for returning MMseqs2 hits. Default recommended == 0.1"""
                   if showHiddenArgs else argparse.SUPPRESS)
-# Opts 5: Alignment free algorithms
-p.add_argument("-alf", dest="alf", type = str, choices = ['google', 'braycurtis', 'canberra', 'hammock'],
-                  help="""Specify the alignment-free algorithm to employ. Recommended to use google.
-                  If you wish to use Hammock, specify it here IN ADDITION TO providing the location of the Hammock.jar file."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-reduce", dest="reduce", choices = ['n', '11', '15'],
-                  help="""If you wish to supply a reduced protein alphabet to the alignment-free computation step, specify whether
-                  this alphabet should be reduced to 15 characters or 11 (11 was used in Alfree benchmark). Recommended not to use ('n')."""
-                  if showHiddenArgs else argparse.SUPPRESS)   ### TESTING: MAKE MSA SCORE COMPATIBLE WITH REDUCED ALPHABET
-p.add_argument("-wordsize", dest="wordsize", type = int,
-                  help="""Dictates the word size used during alignment-free sequence comparison. Recommended to use
-                  2. Depending on your purposes, you may vary this, but the optimal range is likely from 2-6."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-# Opts 6: HDBSCAN algorithm parameters
-p.add_argument("-minsize", dest="minsize", type = int,
-                  help="""Dictates the minimum cluster size argument provided to HDBSCAN. 
-                  Higher numbers will result in identification of domains that occur more frequently in your data. 
-                  Recommended to use 3 (>=2 at least).""" if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-minsample", dest="minsample", type = int,
-                  help="""Dictates the minimum sample size argument provided to HDBSCAN. 
-                  Higher numbers will increase the strictness with which HDBSCAN clusters sequences, 
-                  typically resulting in less sensitivity but higher specificity. Recommended to use 2."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-leaf", dest="leaf", action = "store_true", default = None,                             # Note that we need defaults to == None for arguments where action == "store_true" in order for our command-line/config file handling to work
-                  help="""Changes the HDBSCAN algorithm to use 'leaf' clustering rather than 'excess of mass'. 
-                  Should result in a higher number of smaller-sized groups being identified. Not using leaf is recommended."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-p.add_argument("-singleclust", dest="singleclust",  action = "store_true", default = None,
-                  help="""Changes the HDBSCAN algorithm to allow the discovery of only a single cluster. 
-                  By default HDBSCAN recommends that you do not allow this. If you believe there may only be a 
-                  single novel domain in your data, you can provide this argument."""
-                  if showHiddenArgs else argparse.SUPPRESS)
-# Opts 7: Iteration control
-p.add_argument("-numiters", dest="numiters", type = int,
-                  help="""Optionally specify an upper limit on the amount of times this program will iterate through HMMER domain discovery.
-                  Recommended value depends on size of dataset. Specifying numiters == 10 means this program will end after 10 iterations
-                  OR when no new regions are found, whichever comes first. Numiters == 0 means the program will stop iterating only when
-                  no new domains are found.""" if showHiddenArgs else argparse.SUPPRESS)
 # Opts 8: Various parameters (not intended to be changed, but can be overwrote by command-line arguments)
 p.add_argument("-cleanAA", dest="cleanAA", type = int,
                   help="""This value acts as a 'magic number' for many operations; the default recommended value (30) is based on 30AA being
@@ -598,7 +535,7 @@ fastaBase = os.path.basename(args.fasta).rsplit('.', maxsplit=1)[0]
 outputBase = os.path.join(args.outdir, fastaBase)
 
 ### RUN CD-HIT
-verbose_print(args.verbose, '# Step 1/9: CD-HIT clustering')
+verbose_print(args.verbose, '# Step 1/10: CD-HIT clustering')
 if not os.path.isfile(outputBase + '_step1.complete'):
         params = (args.cdc, args.cdn, args.cdg, args.cdas, args.cdal, args.cdm, args.threads)
         domfind.run_cdhit(args.cdhitdir, args.outdir, args.fasta, fastaBase + '_cdhit.fasta', params)
@@ -608,7 +545,7 @@ if not os.path.isfile(outputBase + '_step1.complete'):
 chunkFiles = domfind.chunk_fasta(args.outdir, outputBase + '_cdhit.fasta', '_chunk', args.threads)    # We always re-chunk the file just in case the user has changed the number of threads; we ideally don't want a user to change any parameters once a run has started, but this is an easy way to remove one of the ways things can go wrong
 
 ### RUN HMMER3
-verbose_print(args.verbose, '# Step 2/9: HMMER non-novel domain prediction')
+verbose_print(args.verbose, '# Step 2/10: HMMER non-novel domain prediction')
 if not os.path.isfile(outputBase + '_step2.1.complete'):
         domfind.run_hmmer3(args.hmmer3dir, args.hmmdb, args.outdir, args.threads, args.hmmeval, outputBase + '_cdhit.fasta', outputBase + '_cdhit_hmmer.results')
         create_blank_file(outputBase + '_step2.1.complete')
@@ -629,7 +566,7 @@ if not os.path.isfile(outputBase + '_step2.3.complete'):
         create_blank_file(outputBase + '_step2.3.complete')
 
 ### RUN SIGNALP
-verbose_print(args.verbose, '# Step 3/9: SignalP prediction')
+verbose_print(args.verbose, '# Step 3/10: SignalP prediction')
 if not os.path.isfile(outputBase + '_step3.complete'):
         if not os.path.isfile(outputBase + '_signalp.results'):
                 domfind.run_signalp(args.signalpdir, '', args.outdir, outputBase + '_signalp.results', args.signalporg, chunkFiles)     # Blank '' is where args.cygwindir would go if this code were Windows-compatible
@@ -639,7 +576,7 @@ if not os.path.isfile(outputBase + '_step3.complete'):
         sigpPredDict = None
 
 ### RUN SEG AND COILS
-verbose_print(args.verbose, '# Step 4/9: LCR & coils prediction')
+verbose_print(args.verbose, '# Step 4/10: LCR & coils prediction')
 if not os.path.isfile(outputBase + '_step4.1.complete'):
         if not os.path.isfile(outputBase + '_seg.fasta'):
                 domfind.run_seg(args.segdir, args.outdir, chunkFiles, outputBase + '_seg.fasta')
@@ -665,7 +602,7 @@ if not os.path.isfile(outputBase + '_step4.2.complete'):
 #### MMSEQS2 OPERATIONS
 
 ### MAKE MMSEQS2 DB
-verbose_print(args.verbose, '# Step 5/9: Make MMseqs2 database')
+verbose_print(args.verbose, '# Step 5/10: Make MMseqs2 database')
 tmpdir = os.path.join(args.outdir, 'mms2tmp')
 if not os.path.isfile(outputBase + '_step5.complete'):
         if not os.path.isdir(tmpdir):
@@ -677,15 +614,15 @@ if not os.path.isfile(outputBase + '_step5.complete'):
         create_blank_file(outputBase + '_step5.complete')
 
 ### RUN MMSEQS2
-verbose_print(args.verbose, '# Step 6/9: MMseqs2 all-against-all alignment')
+verbose_print(args.verbose, '# Step 6/10: MMseqs2 all-against-all alignment')
 if not os.path.isfile(outputBase + '_step6.complete'):
         params = [args.mms2eval, args.threads, 4, 7, 0] # Params refer to [E-value, threads, iteration number, sensitivity, alt alignments]; parameters relating to MMseqs2 algorithm performance are hard-coded since we should never want to make this less strict; once alt alignments are enabled for profile iteration, I'll change this
         domfind.runmms2(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', params)
-        domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, tmpdir, outputBase + '_mmseqs2SEARCH', args.threads)
+        domfind.mms2tab(args.mmseqs2dir, outputBase + '_clean.fasta', None, outputBase + '_mmseqs2SEARCH', args.threads)
         create_blank_file(outputBase + '_step6.complete')
 
 ### PARSE MMSEQS2
-verbose_print(args.verbose, '# Step 7/9: Parse MMseqs2 output')
+verbose_print(args.verbose, '# Step 7/10: Parse MMseqs2 output')
 if not os.path.isfile(outputBase + '_step7.complete'):
         unprocessedArrays = domfind.parsemms2tab_to_array(outputBase + '_mmseqs2SEARCH.m8', outputBase + '_cdhit.fasta', args.cleanAA)
         # Exit condition if we found nothing
@@ -699,125 +636,84 @@ if not os.path.isfile(outputBase + '_step7.complete'):
         domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta', args.cleanAA)   # This minimum size specification (cleanAA) should have no impact here since it's also enforced on the above line
         create_blank_file(outputBase + '_step7.complete')
 
+### CLUSTER MMSEQS2
+verbose_print(args.verbose, '# Step 8/10: Initial MMseqs2 output cluster')
+if not os.path.isfile(outputBase + '_step8.complete'):
+        # Run MMseqs2
+        params = [10, args.threads, 4, 7, 0]
+        domfind.makemms2db(args.mmseqs2dir, outputBase + '_unclustered_domains.fasta', None, 'query')
+        domfind.runmms2(args.mmseqs2dir, outputBase + '_unclustered_domains.fasta', None, tmpdir, outputBase + '_unclustered_domains_mmseqs2SEARCH', params)
+        domfind.mms2tab(args.mmseqs2dir, outputBase + '_unclustered_domains.fasta', None, outputBase + '_unclustered_domains_mmseqs2SEARCH', args.threads)
+        domfind.mms2sort_all(outputBase + '_unclustered_domains_mmseqs2SEARCH.m8', outputBase + '_unclustered_domains_mmseqs2SEARCH_sorted.m8')
+        create_blank_file(outputBase + '_step8.complete')
+
 #### DOMAIN CLUSTERING
-verbose_print(args.verbose, '# Step 8/9: CANDID iteration loop')
-if args.hammockdir != '' and args.alf == 'hammock':
-        verbose_print(args.verbose, '# Clustering program = Hammock')
-else:
-        verbose_print(args.verbose, '# Clustering program = Alignment-free HDBSCAN')
+verbose_print(args.verbose, '# Step 9/10: CANDID iteration loop')
 
 # Set up for main loop
 tmpDir = os.path.join(args.outdir, 'tmp_alignments')
-prevGroupDict = {}
-iterate = 0
-loopCount = 0           # Loop count provides an alternative exit condition to the iteration loop. If a user specifies iterate 1, it will perform the loop twice and then exit (i.e., it will 'iterate' once). If a user specifies 0, the loop will only exit when iterate == 2, which means no new domain regions were found for 2 loops.
-noClust = False
 enteredMain = False
 earlyExit = False
+'''The first iteration uses clustering based on MMseqs2 results'''
+groupDict = domclust.parse_mms2tab_to_clusters(outputBase + '_unclustered_domains_mmseqs2SEARCH_sorted.m8')
 
-# Main loop
+# CANDID operations
 if not os.path.isfile(os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm')):
         enteredMain = True      # This lets us recognise if we actually entered this loop; if we didn't, all the results have been generated so we won't perform the shutil operations below
-        while iterate < 2:      # Main exit condition; if we iterate twice without finding something new, we exit the loop
-                # Optional exit condition to prevent further clustering
-                if os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
-                        earlyExit = True
-                        break
-                # Optional exit condition based on loop count
-                if loopCount > args.numiters and args.numiters != 0:
-                        break
-                # Clustering step
-                if args.hammockdir != '' and args.alf == 'hammock':
-                        # Hammock clustering
-                        domclust.run_hammock(args.hammockdir, args.javadir, os.path.join(args.outdir, 'hammock_out'), args.threads, outputBase + '_unclustered_domains.fasta')
-                        groupDict = domclust.parse_hammock(os.path.join(args.outdir, 'hammock_out', 'final_clusters_sequences_original_order.tsv'), outputBase + '_unclustered_domains.fasta')
-                else:
-                        # HDBSCAN clustering
-                        matrixList, idList = domclust.alfree_matrix(outputBase + '_unclustered_domains.fasta', args.wordsize, args.reduce, args.alf)
-                        groupDict = domclust.cluster_hdb(args.leaf, args.singleclust, args.minsize, args.minsample, matrixList, idList)
-                if groupDict == None:
-                        noClust = True
-                        break
-                # Alignment steps
-                domclust.tmpdir_setup(tmpDir)
-                domclust.mafft_align(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict, 'localpair')         # We choose not to reuse the alignments Hammock presents (if we are running Hammock) since they're done with Clustal and, from inspection, they're simply worse than what we do with MAFFT here
-                # Cluster curation: trim and remove excessively gappy sequences                                                                                                                                       # Also, we're specifying for MAFFT to use localpair alignment; this should be ideal since L-INS-i assumes a single alignment domain which should be true
-                i = 0
-                while True:
-                        if i >= len(groupDict):
-                                break
-                        msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
-                        msaObj = domclust.msa_trim(msaFileName, 0.7, 0.25, 'both', msaFileName, 0.5, 'drop')    # Values are arbitrary, unlikely to need user-modification; 0.7 means we'll trim up to the point where 70% of the sequence's have a base present in a single column, 0.25 means we will only trim it maximally up to 25% remaining of the sequence length - if we need to trim it more than that to reach our 70% goal, we'll drop the whole msa
-                        if msaObj != None:                                                                      # Line above: 0.5 here means we will drop individual sequences that don't "fit" the alignment if they are more than 50% gap sequence; 'drop' specifies the behaviour to drop this alignment, returning None; finally, we specify 'both' to both return a msa object and write the modified alignment to file
-                                alignCheck = domclust.msa_score(msaObj, 'sp', 0.20)                             # Value is arbitrary; MSAs which score less than 0.20 tends to look pretty bad from visual inspection, and it seems like a good way to remove obviously bad clusters automatically
-                        else:
-                                alignCheck = False
-                        if alignCheck == False:
-                                groupDict = dict_entry_delete(groupDict, i)
-                                align_files_rename(tmpDir, i, 'Domain_', '_align.fasta')
-                        else:
-                                i += 1
-                if groupDict == {}:
-                        noClust = True
-                        break
-                # Cluster curation: detect and remove outlier sequences [We need to separate this from the above since we need to run it all in a single go as calling Rscript and loading in packages for each individual sequence is too time consuming]
-                msaFileNameList = []
-                for i in range(len(groupDict)):
-                        msaFileName = os.path.join(tmpDir, 'Domain_' + str(i) + '_align.fasta')
-                        msaFileNameList.append(msaFileName)
-                odSeqResults = domclust.odseq_outlier_detect(msaFileNameList, args.rscriptdir, tmpDir, 0.01, 'affine', 1000)            # Values are somewhat arbitrary; 0.01 refers to ODseq threshold and seems to be appropriate, 'affine' means we will penalise gaps, and 1000 is the number of bootstrap replicates - it seems to be fast enough so the large number isn't a concern
-                try:
-                        spOutResults = domclust.msa_outlier_detect(msaFileNameList, True, True)                                         # The first True here means we use basic distribution statistics to justify HDBSCAN's outlier prediction; it helps to temper HDBSCAN and should thus be turned on
-                        mergedOutlierResults = domclust.outlier_dict_merge(odSeqResults, spOutResults)                                  # The second True above removes identical sequences for the purpose of calculating distribution statistics; this helps to prevent a domain being overwhelmed by identicality (it's a word, look it up)
-                except:
-                        mergedOutlierResults = odSeqResults
-                
-                domclust.curate_msa_from_outlier_dict(mergedOutlierResults, msaFileNameList)
-                # HMMER3 steps
-                domclust.cluster_hmms(tmpDir, args.hmmer3dir, 'dom_models.hmm')
-                domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
-                domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None)       # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format, and None is because we don't care about dom_prefixes values
-                coordDict = domtblout_handling.hmmer_coord_reparse(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), args.hmmevalnov, False)     # We specify False here since we don't want to merge coords; they shouldn't overlap, anyway
-                # Compare coords against known domain model coords to prevent rediscovery of known domains
-                try:
-                        type(hmmerCoordDict)                                                                                            # If we're running the program in a single go, or we are reiterating, we will already have produced this value
-                except:
-                        hmmerCoordDict = domtblout_handling.hmmer_coord_reparse(outputBase + '_hmmerParsed.results', None, True)        # If we're resuming a run or on our first loop, we'll want to reobtain this value
-                coordDict = domclust.coord_lists_overlap_cull(hmmerCoordDict, coordDict, 0.10)                                          # Value is arbitrary; this function will remove any coord from coordDict if it overlaps a coord in hmmerCoordDict by >= 10% in either direction
-                if coordDict == {}:
-                        noClust = True
-                        break
-                # Compare clusters to see if anything changed
-                if loopCount != 0:
-                        changes = domclust.coord_dict_compare(coordDict, prevCoordDict)
-                        if changes == True:
-                                iterate = 0
-                                print('# ITER' + str(loopCount) + ': Something changed')
-                        else:
-                                iterate += 1
-                                print('# ITER' + str(loopCount) + ': Nothing changed')          # If this happens once, it will happen twice from current testing; change behaviour if this holds true on larger test sets
-                prevCoordDict = copy.deepcopy(coordDict)        # Hold onto this for comparison
-                # Extract new unclustered domains
-                domfind.fasta_domain_extract(coordDict, outputBase + '_cdhit.fasta', outputBase + '_unclustered_domains.fasta', args.cleanAA)   # Specifying the minimum size (cleanAA) here means we won't extract small regions from our HMMER table
-                loopCount += 1
+        # Optional exit condition to prevent further clustering
+        if not os.path.isfile(os.path.join(args.outdir, 'CANDID_exit_marker')):
+                # Exit condition based on groupDict absence of results
+                if groupDict != None:
+                        # MAFFT alignment steps
+                        domclust.tmpdir_setup(tmpDir)
+                        domclust.mafft_align_clust_dict(args.mafftdir, outputBase + '_unclustered_domains.fasta', tmpDir, 'Domain_', '_align.fasta', args.threads, groupDict, 'localpair') # We're specifying for MAFFT to use localpair alignment; this should be ideal since L-INS-i assumes a single alignment domain which should be true
+                        # Obtain aligned files
+                        alignedList = []
+                        for f in os.listdir(tmpDir):
+                                if f.endswith("_align.fasta"):
+                                        alignedList.append(os.path.join(tmpDir, f))
+                        # HMMER3 steps
+                        domclust.cluster_hmms(alignedList, tmpDir, args.hmmer3dir, 'dom_models.hmm')
+                        domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
+                        domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None, True)         # 25.0 refers to our overlap cutoff which determines whether we'll trim or delete overlaps; False and False means we will produce a 'normal' parsed format...
+                        domtblout_handling.hmmer_reparse_fasta_domain_extract(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), outputBase + '_cdhit.fasta', tmpDir)                                                             # None is because we don't care about dom_prefixes values, and True is to overwrite existing results
+                        # Realign with MAFFT
+                        realignList = []
+                        for f in os.listdir(tmpDir):
+                                if f.endswith(".fasta") and not f.endswith("_align.fasta"):
+                                        realignList.append(os.path.join(tmpDir, f))
+                        domclust.mafft_align_file_list(args.mafftdir, tmpDir, realignList, args.threads, 'localpair') # This function cleans up after itself i.e., it deletes the unaligned fastas
+                        # Cluster curation: trim MSAs
+                        for msaFileName in alignedList:
+                                domclust.msa_trim(msaFileName, 0.5, 0.10, 'file', msaFileName, 0.9, 'skip', 'identical')        # Values are arbitrary, unlikely to need user-modification; 0.5 means we'll trim up to the point where 50% of the sequence's have an IDENTICAL base present in a single column, 0.10 means we will only trim it maximally up to 10% remaining of the sequence length - if we need to trim it more than that to reach our 70% goal, we'll skip trimming
+                        # Second iteration of HMMER3 steps                                                                      # 0.9 means we'll only remove an individual sequence if it contains >= 90% gaps, and identical is responsible for the IDENTICAL behaviour above
+                        domclust.cluster_hmms(alignedList, tmpDir, args.hmmer3dir, 'dom_models.hmm')
+                        domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
+                        domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None, True)
+                        domtblout_handling.hmmer_reparse_fasta_domain_extract(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), outputBase + '_cdhit.fasta', tmpDir)
+                        # Final realignment with MAFFT
+                        realignList = []
+                        for f in os.listdir(tmpDir):
+                                if f.endswith(".fasta") and not f.endswith("_align.fasta"):
+                                        realignList.append(os.path.join(tmpDir, f))
+                        domclust.mafft_align_file_list(args.mafftdir, tmpDir, realignList, args.threads, 'localpair')
+                        # Final creation of HMMs
+                        domclust.cluster_hmms(alignedList, tmpDir, args.hmmer3dir, 'dom_models.hmm')
+                        domfind.run_hmmer3(args.hmmer3dir, os.path.join(tmpDir, 'dom_models.hmm'), tmpDir, args.threads, args.hmmeval, outputBase + '_clean.fasta', os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'))
+                        domtblout_handling.handle_domtblout(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), args.hmmevalnov, 25.0, False, False, os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), None, True)
 
 # Provide informative loop exit text
-if noClust == True:
-        print('No clusters were discovered during CANDID iteration.')
-elif enteredMain == False:
+if enteredMain == False:
         print('CANDID output files already exist in this directory; move or delete these to perform CANDID iteration again.')
 else:
-        print('Program finished successfully after iterating ' + str(loopCount-1) + ' time(s).')
-        if loopCount > args.numiters and args.numiters != 0:
-                print('This occurred after the maximum iteration limit was reached.')
-        elif earlyExit == True:
-                print('This occurred after an exit marker file was detected within the output directory.')
-        else:
-                print('This occurred after no new domain regions were able to be found.')
+        print('Program finished successfully!')
+        if earlyExit == True:
+                print('(This occurred after an exit marker file was detected within the output directory.)')
         
         #### FINAL RESULTS PRESENTATION
-        verbose_print(args.verbose, '# Step 9/9: Final output tidying')
+        verbose_print(args.verbose, '# Step 10/10: Final output tidying')
         shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_' + fastaBase + '.domtblout'))
+        shutil.move(os.path.join(tmpDir, fastaBase + '_clean_hmmer_parsed.results'), os.path.join(args.outdir, 'CANDID_hmmer_table_parsed_' + fastaBase + '.domtblout'))
         shutil.move(os.path.join(tmpDir, 'dom_models.hmm'), os.path.join(args.outdir, 'CANDID_domain_models_' + fastaBase + '.hmm'))
         verbose_print(args.verbose, 'Major file outputs can be located at "' + args.outdir + '" with CANDID prefix.')
         verbose_print(args.verbose, 'Individual domain alignments can be found in "' + tmpDir + '".')

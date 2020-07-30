@@ -131,7 +131,7 @@ def tmpdir_setup(tmpDir):
         else:
                 os.mkdir(tmpDir)
 
-def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict, algorithm):
+def mafft_align_clust_dict(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_dict, algorithm):
         # Ensure that algorithm value is sensible
         if algorithm != None:   # If this is None, we'll just use default MAFFT
                 if algorithm.lower() not in ['genafpair', 'localpair', 'globalpair']:
@@ -206,7 +206,76 @@ def mafft_align(mafftdir, fastaFile, outputDir, prefix, suffix, threads, group_d
         for process_thread in processing_threads:
                 process_thread.join()
 
-def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop, skipOrDrop):
+def mafft_align_file_list(mafftdir, outputDir, fileList, threads, algorithm):
+        # Ensure that algorithm value is sensible
+        if algorithm != None:   # If this is None, we'll just use default MAFFT
+                if algorithm.lower() not in ['genafpair', 'localpair', 'globalpair']:
+                        print('mafft_align: algorithm option must be an option in the below list. Fix this parameter and try again.')
+                        print(['genafpair', 'localpair', 'globalpair'])
+                        quit()
+        # Define functions integral to this one
+        def run_mafft(mafftdir, outputDir, fileList, startNum, endNum, thread, algorithm):
+                # Set up
+                for i in range(startNum, endNum):
+                        # Identify file to align
+                        fastaFile = fileList[i]
+                        # Run MAFFT
+                        if platform.system() == 'Windows':
+                                mafft_cline = MafftCommandline(os.path.join(mafftdir, 'mafft.bat'), input=fastaFile)
+                        else:
+                                mafft_cline = MafftCommandline(os.path.join(mafftdir, 'mafft'), input=fastaFile)
+                        if algorithm != None:
+                                if algorithm.lower() == 'genafpair':
+                                        mafft_cline.genafpair = True
+                                elif algorithm.lower() == 'localpair':
+                                        mafft_cline.localpair = True
+                                elif algorithm.lower() == 'globalpair':
+                                        mafft_cline.globalpair = True
+                        stdout, stderr = mafft_cline()
+                        if stdout == '':
+                                raise Exception('MAFFT error text below' + str(stderr))
+                        # Process MAFFT output
+                        stdout = stdout.split('\n')
+                        while stdout[-1] == '\n' or stdout[-1] == '' or stdout[-1] == 'Terminate batch job (Y/N)?\n':   # Remove junk, sometimes MAFFT will have the 'Terminate ...' line
+                                del stdout[-1]
+                        stdout = '\n'.join(stdout)
+                        # Create output alignment files
+                        fileOutName = os.path.basename(fastaFile).rsplit(".", maxsplit=1)[0] + "_align.fasta"
+                        with open(os.path.join(outputDir, fileOutName), 'w') as fileOut:
+                                fileOut.write(stdout)
+                        # Clean up temp file
+                        os.unlink(fastaFile)
+
+        # Set up threading requirements                         # This threading system is derived from chunk_fasta in (what is currently called) domfind.py
+        list_size = len(fileList)
+        rawNum = list_size / threads                            # In cases where threads > dict_size, rawNum will be less than 1. numRoundedUp will equal the number of threads, and so we'll end up rounding these to 1. Yay!
+        numRoundedUp = round((rawNum % 1) * threads, 0)         # By taking the decimal place and multiplying it by the num of threads, we can figure out how many threads need to be rounded up to process every cluster
+        chunkPoints = []
+        ongoingCount = 0
+        for i in range(int(threads)):
+                if i+1 <= numRoundedUp:                         # i.e., if two threads are being rounded up, we'll round up the first two loops of this
+                        chunkPoints.append([ongoingCount, math.ceil(rawNum) + ongoingCount])    # Round up the rawNum, and also add our ongoingCount which corresponds to the number of clusters already put into a chunk
+                        ongoingCount += math.ceil(rawNum)                                       # Unlike chunk_fasta, we're storing a paired value of ongoingCount and the chunk point
+                else:                                                                           # Our mafft function iterates over a range, so we go up to and not including the last value; this system is compliant with that style of sorting
+                        chunkPoints.append([ongoingCount, math.floor(rawNum) + ongoingCount])   # Also note that group_dict is indexed starting from 0, so if group_dict len == 10, we want to iterate over range(0,10) since the last actual index is 9
+                        ongoingCount += math.floor(rawNum)
+                if ongoingCount >= list_size:                   # Without this check, if we have more threads than clusters, we can end up with "extra" numbers in the list (e.g., [1, 2, 3, 4, 5, 6, 6, 6, 6, 6]).
+                        break
+        # Begin the loop
+        processing_threads = []
+        ongoingCount = 0
+        for start, end in chunkPoints:
+                build = threading.Thread(target=run_mafft, args=(mafftdir, outputDir, fileList, start, end, ongoingCount+1, algorithm))
+                processing_threads.append(build)
+                build.start()
+                ongoingCount += 1
+
+        # Wait for all threads to end.
+        for process_thread in processing_threads:
+                process_thread.join()
+
+def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop, skipOrDrop, pctTrimType='presence'):
+        from collections import Counter
         '''msaFastaIn is the path to the aligned MSA FASTA file to be trimmed
         pctTrim refers to the minimum proportion of sequences present in a single column to demarcate the start and end of an alignment
         minLength refers to the minimum length of a MSA after trimming before we decide to not trim at all; if this value is less than 1,
@@ -221,6 +290,12 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
                 quit()
         if (outType.lower() == 'file' or outType.lower() == 'both') and not type(msaFastaOut) == str:
                 print('msa_trim: You specified a file output but didn\'t provide a string for msaFasta out - the file output name.')
+                print('Format this correctly and try again.')
+                quit()
+        # Ensure pctTrimType is sensible
+        if pctTrimType.lower() not in ['presence', 'identical']:
+                print('msa_trim: This function requires a pctTrimType to be specified with a specific format.')
+                print('Your provided value "' + pctTrimType + '" should does not meet specifications')
                 print('Format this correctly and try again.')
                 quit()
         # Process minLength and ensure it is sensible
@@ -255,19 +330,47 @@ def msa_trim(msaFastaIn, pctTrim, minLength, outType, msaFastaOut, indivSeqDrop,
         # Load in fasta file as MSA object
         msa = AlignIO.read(msaFastaIn, 'fasta')
         # Loop through aligned columns and find the first position from the 5' end that meets our pctTrim value
-        for i in range(len(msa[0].seq)):
-                col = msa[:,i]
-                pctBases = 1 - (col.count('-') / len(col))
-                if pctBases <= pctTrim:
-                        continue
-                break
-        # Same but for 3' end
-        for x in range(len(msa[0].seq), 0, -1):
-                col = msa[:,x-1]
-                pctBases = 1 - (col.count('-') / len(col))
-                if pctBases <= pctTrim:
-                        continue
-                break
+        if pctTrimType.lower() == 'presence':
+                for i in range(len(msa[0].seq)):
+                        col = msa[:,i]
+                        pctBases = 1 - (col.count('-') / len(col))
+                        if pctBases <= pctTrim:
+                                continue
+                        break
+                # Same but for 3' end
+                for x in range(len(msa[0].seq), 0, -1):
+                        col = msa[:,x-1]
+                        pctBases = 1 - (col.count('-') / len(col))
+                        if pctBases <= pctTrim:
+                                continue
+                        break
+        elif pctTrimType.lower() == 'identical':
+                for i in range(len(msa[0].seq)):
+                        col = msa[:,i]
+                        colCount = Counter(col)
+                        identical = 0
+                        for key, value in colCount.items():
+                                if key != '-':
+                                        if value > identical:
+                                                identical = value
+                        pctBases = identical / len(col)
+                        if pctBases <= pctTrim:
+                                continue
+                        break
+                # Same but for 3' end
+                for x in range(len(msa[0].seq), 0, -1):
+                        col = msa[:,x-1]
+                        colCount = Counter(col)
+                        identical = 0
+                        for key, value in colCount.items():
+                                if key != '-':
+                                        if value > identical:
+                                                identical = value
+                        pctBases = identical / len(col)
+                        if pctBases <= pctTrim:
+                                continue
+                        break
+
         # Check our values to ensure they're sensible
         if i >= x:      # If i >= x, that means we'd be trimming the sequence to 1bp or a negative value; in other words, we can't trim it at this pctTrim as printed below
                 if skipOrDrop.lower() == 'skip':
@@ -775,29 +878,29 @@ def file_name_gen(prefix, suffix):
                 else:
                         return prefix + str(ongoingCount) + suffix
 
-def cluster_hmms(msaDir, hmmer3dir, concatName):
+def cluster_hmms(msaFileList, outputDir, hmmer3dir, concatName):
         # Set up
         import os, subprocess
         # Build HMMs from MSA directory
-        msaFastas = os.listdir(msaDir)
         hmms = []
-        for msa in msaFastas:
+        for msa in msaFileList:
+                msa = os.path.abspath(msa)
                 outputFileName = msa.rsplit('.', maxsplit=1)[0] + '.hmm'
                 hmms.append(outputFileName)
                 # Format cmd
-                cmd = os.path.join(hmmer3dir, 'hmmbuild') + ' "' + os.path.join(msaDir, outputFileName) + '" "' + os.path.join(msaDir, msa) + '"'
+                cmd = os.path.join(hmmer3dir, 'hmmbuild') + ' "' + os.path.join(outputDir, outputFileName) + '" "' + msa + '"'
                 # Run hmmbuild
                 run_hmmbuild = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
                 hmmout, hmmerr = run_hmmbuild.communicate()
                 if hmmerr.decode("utf-8") != '':
                         raise Exception('hmmbuild error text below\n' + str(hmmerr.decode("utf-8")) + '\nMake sure that you define the -h3dir argument if this directory is not in your PATH')
         # Concatenate HMMs
-        concatHMM = os.path.join(msaDir, concatName)
+        concatHMM = os.path.join(outputDir, concatName)
         with open(concatHMM, 'w') as fileOut:
                 for hmm in hmms:
-                        fileOut.write(open(os.path.join(msaDir, hmm), 'r').read())
+                        fileOut.write(open(hmm, 'r').read())
         # Press HMMs
-        cmd = os.path.join(hmmer3dir, 'hmmpress') + ' -f "' + os.path.join(msaDir, concatHMM) + '"'
+        cmd = os.path.join(hmmer3dir, 'hmmpress') + ' -f "' + concatHMM + '"'
         run_hmmpress = subprocess.Popen(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.PIPE, shell = True)
         hmmout, hmmerr = run_hmmpress.communicate()
         if hmmerr.decode("utf-8") != '':
@@ -996,15 +1099,16 @@ def parse_hammock(hammockOutFile, originalFasta):   # originalFasta refers to th
 def parse_mms2tab_to_clusters(mms2Table):
         import math
         '''Note: Function currently assumes
-        file is sorted.
+        file is sorted by E-value.
         '''
-        mms2Table = r"F:\toxins_annot\analysis\CANDID\run1\working\candid_input_clean_unclustered_domains_mmseqs2SEARCH.m8"
         clustDict = {}
+        newClustNumber = 0
         idPointerDict = {}
         evalueDict = {}
         EVALUE_REDUCTION = 2
-        def update_cluster_evalues(clustDict, evalueDict, seqID, newEvalue):
-                clustList = clustDict[seqID]
+        EVALUE_SAFETY_NET = -15 # REALLY arbitrary, might help clusters a bit?
+        def update_cluster_evalues(clustDict, evalueDict, clustNumber, newEvalue):
+                clustList = clustDict[clustNumber]
                 for sid in clustList:
                         evalueDict[sid] = max([evalueDict[sid], newEvalue])
                 
@@ -1021,45 +1125,68 @@ def parse_mms2tab_to_clusters(mms2Table):
                         if qid == tid:
                                 continue
                         # New qid hits
-                        if qid not in clustDict:
+                        if qid not in idPointerDict:
                                 # New qid + new tid hits
-                                if tid not in clustDict:
+                                if tid not in idPointerDict:
                                         # Handle qid
-                                        clustList = [qid, tid]
-                                        clustDict[qid] = clustList
+                                        clustDict[newClustNumber] = [qid, tid]
+                                        idPointerDict[qid] = newClustNumber
                                         evalueDict[qid] = evalue
                                         # Handle tid
-                                        clustDict[tid] = clustList
+                                        idPointerDict[tid] = newClustNumber
                                         evalueDict[tid] = evalue
+                                        newClustNumber += 1
                                 # New qid + old tid hits
                                 else:
-                                        passableEvalue = math.log10(evalueDict[tid]) / EVALUE_REDUCTION
+                                        passableEvalue = max([math.log10(evalueDict[tid]) / EVALUE_REDUCTION, EVALUE_SAFETY_NET])
                                         if math.log10(evalue) <= passableEvalue:
+                                                # Obtain clustNumber
+                                                clustNumber = idPointerDict[tid]
                                                 # Handle qid
                                                 evalueDict[qid] = evalue
-                                                clustDict[qid] = clustDict[tid]
+                                                idPointerDict[qid] = clustNumber
                                                 # Update tid cluster
-                                                clustDict[tid].append(qid)
-                                                update_cluster_evalues(clustDict, evalueDict, tid, evalue)
+                                                clustDict[clustNumber].append(qid)
+                                                update_cluster_evalues(clustDict, evalueDict, clustNumber, evalue)
                         # Old qid hits
-                        elif qid in clustDict:
+                        elif qid in idPointerDict:
                                 # Old qid + new tid hits
-                                if tid not in clustDict:
-                                        passableEvalue = math.log10(evalueDict[qid]) / EVALUE_REDUCTION
+                                if tid not in idPointerDict:
+                                        passableEvalue = max([math.log10(evalueDict[qid]) / EVALUE_REDUCTION, EVALUE_SAFETY_NET])
                                         if math.log10(evalue) <= passableEvalue:
+                                                # Obtain clustNumber
+                                                clustNumber = idPointerDict[qid]
                                                 # Handle tid
                                                 evalueDict[tid] = evalue
-                                                clustDict[tid] = clustDict[qid]
+                                                idPointerDict[tid] = clustNumber
                                                 # Update qid cluster
-                                                clustDict[qid].append(tid)
-                                                update_cluster_evalues(clustDict, evalueDict, qid, evalue)
+                                                clustDict[clustNumber].append(tid)
+                                                update_cluster_evalues(clustDict, evalueDict, clustNumber, evalue)
                                 # Old qid + old tid hits
                                 else:
                                         # Check if E-value is compatible
-                                        passableEvalue1 = math.log10(evalueDict[qid]) / EVALUE_REDUCTION
-                                        passableEvalue2 = math.log10(evalueDict[tid]) / EVALUE_REDUCTION
+                                        passableEvalue1 = max([math.log10(evalueDict[qid]) / EVALUE_REDUCTION, EVALUE_SAFETY_NET])
+                                        passableEvalue2 = max([math.log10(evalueDict[tid]) / EVALUE_REDUCTION, EVALUE_SAFETY_NET])
                                         if math.log10(evalue) <= passableEvalue1 and math.log10(evalue) <= passableEvalue2:
+                                                # Obtain clustNumbers
+                                                clustNumber1 = idPointerDict[qid]
+                                                clustNumber2 = idPointerDict[tid]
+                                                # Skip inverse cluster scenario
+                                                if clustNumber1 == clustNumber2:
+                                                        continue
                                                 # Merge clusters
-                                                clustDict[qid] += clustDict[tid]
-                                                clustDict[tid] = clustDict[qid]
-                                                update_cluster_evalues(clustDict, evalueDict, qid, evalue)
+                                                clustDict[clustNumber1] += clustDict[clustNumber2]
+                                                clustDict[clustNumber1] = list(set(clustDict[clustNumber1]))
+                                                # Update pointers
+                                                for sid in clustDict[clustNumber2]:
+                                                        idPointerDict[sid] = clustNumber1
+                                                del clustDict[clustNumber2]
+                                                # Update cluster evalues
+                                                update_cluster_evalues(clustDict, evalueDict, clustNumber1, evalue)
+        # Update cluster numbers for uniformity
+        finalClustDict = {}
+        ongoingCount = 0
+        for key, value in clustDict.items():
+                finalClustDict[ongoingCount] = value
+                ongoingCount += 1
+        return finalClustDict

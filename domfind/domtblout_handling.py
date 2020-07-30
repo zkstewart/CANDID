@@ -6,7 +6,7 @@
 # https://github.com/zkstewart/Various_scripts
 
 ## Validate arguments
-def validate_args(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes):
+def validate_args(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes, overwrite=False):
         # Set up
         import os
         # Validate input file locations
@@ -34,9 +34,10 @@ def validate_args(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, ou
                 dom_prefixes = databaseSelect
                 hmmdbScript = False        # These options are incompatible, make sure it's turned off here
         # Handle file overwrites
-        if os.path.isfile(outputFileName):
-                print(outputFileName + ' already exists. Delete/move/rename this file and run the program again.')
-                quit()
+        if overwrite == False:
+                if os.path.isfile(outputFileName):
+                        print(outputFileName + ' already exists. Delete/move/rename this file and run the program again.')
+                        quit()
         return ovlCutoff, databaseSelect, dom_prefixes, hmmdbScript
 
 ## Main parsing functions
@@ -503,6 +504,85 @@ def hmmer_coord_reparse(parsedFile, evalueCutoff, merge):      # This version of
                         coordDict[key] = coord_lists_merge(value, 0)
         return coordDict
 
+# def hmmer_reparse_to_clusters(parsedFile):
+#         # Set up
+#         import os
+#         clustDict = {}
+#         # Main function
+#         with open(parsedFile, 'r') as fileIn:
+#                 for line in fileIn:
+#                         # Skip unnecessary lines
+#                         if line.startswith('#') or line == '' or line == '\n' or line == '\r\n':
+#                                 continue
+#                         # Extract entries from lines
+#                         sl = line.rstrip('\r\n').split('\t')
+#                         domList = []
+#                         for entry in sl[1:]:
+#                                 # Split entries up into their individual information characteristics
+#                                 info = entry.split(', ')        # This should be a list like [domainID, startPosition, endPosition, E-value]
+#                                 # Remove the formatting characters that are only there for visual inspection purposes
+#                                 for i in range(len(info)):
+#                                         info[i] = info[i].strip("'[]")
+#                                 # Store in clustDict
+#                                 domID = os.path.basename(info[0])
+#                                 if domID in clustDict:
+#                                         clustDict[domID].append([sl[0], int(info[1]), int(info[2])])
+#                                 else:
+#                                         clustDict[domID] = [[sl[0], int(info[1]), int(info[2])]]
+#         return clustDict
+
+def hmmer_reparse_fasta_domain_extract(parsedFile, fastaFile, outputDir):
+        # Set up
+        import os
+        from Bio import SeqIO
+        seqDict = {}
+        # Step 1: Obtain seqDict
+        with open(parsedFile, 'r') as fileIn:
+                for line in fileIn:
+                        # Skip unnecessary lines
+                        if line.startswith('#') or line == '' or line == '\n' or line == '\r\n':
+                                continue
+                        # Extract entries from lines
+                        sl = line.rstrip('\r\n').split('\t')
+                        seqid = sl[0]
+                        domList = []
+                        for entry in sl[1:]:
+                                # Split entries up into their individual information characteristics
+                                info = entry.split(', ')        # This should be a list like [domainID, startPosition, endPosition, E-value]
+                                # Remove the formatting characters that are only there for visual inspection purposes
+                                for i in range(len(info)):
+                                        info[i] = info[i].strip("'[]")
+                                # Store in seqDict
+                                domID = os.path.basename(info[0]).rsplit("_", maxsplit=1)[0] # remove _align
+                                if seqid in seqDict:
+                                        seqDict[seqid].append([domID, int(info[1]), int(info[2])])
+                                else:
+                                        seqDict[seqid] = [[domID, int(info[1]), int(info[2])]]
+        # Step 2: Extract domains to fasta
+        #fastaClustDict = {} # This will store a format {DomainID: [[seqid, seq] ... ]}
+        records = SeqIO.parse(open(fastaFile, 'r'), 'fasta')
+        for record in records:
+                if record.description in seqDict:
+                        seqid = record.description
+                elif record.id in seqDict:    # POSSIBLE PROBLEM: May need to be more strict with ID parsing consistency especially since MMseqs2 does change sequence IDs...
+                        seqid = record.id
+                else:
+                        continue
+                seq = str(record.seq)
+                # Obtain ranges to extract from sequence
+                ranges = seqDict[seqid]
+                for i in range(len(ranges)):
+                        # Extract sequence
+                        tmpDomain = seq[ranges[i][1]-1:ranges[i][2]] # ranges values are 1-based
+                        # Write to relevant file
+                        outputFileName = os.path.join(outputDir, ranges[i][0] + '.fasta')
+                        if os.path.isfile(outputFileName):
+                                with open(outputFileName, 'a') as fileOut:
+                                        fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][1]) + '-' + str(ranges[i][2]) + '\n' + tmpDomain + '\n')
+                        else:
+                                with open(outputFileName, 'w') as fileOut:
+                                        fileOut.write('>' + seqid + '_Domain_' + str(i+1) + '_' + str(ranges[i][1]) + '-' + str(ranges[i][2]) + '\n' + tmpDomain + '\n')
+
 # Helper function for above
 def coord_lists_merge(coordLists, offsetNum):           # offsetNum lets us specify increased stringency for overlaps; this is useful if we don't want 1 coord overlaps to cause merging
         # Ensure that coordLists is formatted correctly; we expect a list of list of pairs, but the user may input just a list of pairs
@@ -568,13 +648,13 @@ def hmmdb_output_func(inputDict, dom_prefixes, outputFileName, ovlCutoff):
                         fileOut.write(key + '\t' + '\t'.join(hitReceptacle) + '\n')
 
 ## Main pipe function
-def handle_domtblout(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes):
+def handle_domtblout(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes, overwrite=False):
         # Set default dom prefixes if not specified - this is compatible with my (Z.K.Stewart's) domain database building system and only needs to be overridden if another system is being used
         if dom_prefixes == None:
                 dom_prefixes = ['cd', 'COG', 'KOG', 'LOAD', 'MTH', 'pfam', 'PHA', 'PRK', 'PTZ', 'sd', 'smart', 'TIGR', 'PLN', 'CHL', 'cath', 'SUPERFAMILY']    # These encompass the databases currently part of NCBI's CDD, and cath which I add to this resource. SUPERFAMILY is also included, but it is purely numbers so no prefix is applicable; if it lacks any of these prefixes, it's a SUPERFAMILY domain.
 
         # Parse arguments to ensure this function will work
-        ovlCutoff, databaseSelect, dom_prefixes, hmmdbScript = validate_args(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes)
+        ovlCutoff, databaseSelect, dom_prefixes, hmmdbScript = validate_args(inputHmmer, evalue, ovlCutoff, hmmdbScript, databaseSelect, outputFileName, dom_prefixes, overwrite)
 
         # Parse hmmer domblout file
         domDict = hmmer_parse(inputHmmer, evalue)

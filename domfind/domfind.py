@@ -538,6 +538,33 @@ def mms2tab(mmseqs2dir, query, target, searchName, threads):
         if mms2err.decode("utf-8") != '':
                 raise Exception('MMseqs2 tabular output generation error text below\n' + mms2err.decode("utf-8"))
 
+def mms2sort_all(searchName, outName):
+        from itertools import groupby
+        groups = []
+        # Parse file
+        grouper = lambda x: x.split('\t')[0]
+        with open(searchName, 'r') as fileIn:
+                for key, group in groupby(fileIn, grouper):
+                        group = list(group)
+                        # Sort group [If len(group) == 1 it doesn't matter]
+                        for i in range(len(group)):
+                                group[i] = group[i].rstrip('\n').split('\t')
+                        group.sort(key = lambda x: (float(x[10]),-float(x[11])))
+                        # Get a representative E-value for the group
+                        groupEvalue = 100000 # Handles groups with only self hit
+                        for i in range(len(group)):
+                                if group[i][0] != group[i][1] and groupEvalue == 100000:
+                                        groupEvalue = float(group[i][10])
+                                group[i] = '\t'.join(group[i])
+                        # Store group for overall sorting
+                        groups.append([groupEvalue, group])
+        # Sort overall groups
+        groups.sort(key = lambda x: x[0])
+        # Put in output
+        with open(outName, 'w') as fileOut:
+                for entry in groups:
+                        fileOut.write("\n".join(entry[1]) + '\n')
+
 def parsemms2tab_to_array(mms2Table, fastaFile, lowLenCutoff):
         # Set up
         from Bio import SeqIO
